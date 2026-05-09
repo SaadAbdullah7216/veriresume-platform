@@ -45,6 +45,7 @@ const AdminUsers = () => {
     { key: "all", label: "All Users", icon: Users },
     { key: "jobseeker", label: "Job Seekers", icon: UserPlus },
     { key: "hr", label: "HR Recruiters", icon: Building2 },
+    { key: "premium", label: "Premium Users", icon: Crown },
     { key: "admin", label: "Admins", icon: Shield },
   ];
 
@@ -62,7 +63,11 @@ const AdminUsers = () => {
       setLoading(true);
       const token = localStorage.getItem("token");
       const params: any = {};
-      if (roleFilter !== "all") params.role = roleFilter;
+      if (roleFilter === "premium") {
+        params.premium = "true";
+      } else if (roleFilter !== "all") {
+        params.role = roleFilter;
+      }
       if (searchTerm) params.search = searchTerm;
 
       const res = await axios.get(`${API_URL}/api/admin/users`, {

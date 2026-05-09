@@ -35,6 +35,7 @@ interface Resume {
     grammarScore?: number;
     readability?: number;
     structureScore?: number;
+    overallScore?: number;
     keywordDensity?: number;
     suggestions?: string[];
     weaknesses?: string[];
@@ -60,7 +61,9 @@ const AIAnalytics = () => {
       });
 
       if (response.data.success) {
-        const resumeList = response.data.data;
+        const rawData = response.data.data;
+        // Handle both { resumes: [...] } and direct array format
+        const resumeList = Array.isArray(rawData) ? rawData : (rawData?.resumes || []);
         setResumes(resumeList);
         if (resumeList.length > 0) {
           setSelectedResume(resumeList[0]);
@@ -147,6 +150,17 @@ const AIAnalytics = () => {
 
   const analysis = selectedResume.aiAnalysis;
   const hasAnalysis = analysis && (analysis.atsScore || 0) > 0;
+
+  // Compute the true overall score: ATS×35% + Grammar×20% + Readability×20% + Structure×25%
+  const computedOverall = analysis
+    ? analysis.overallScore ||
+      Math.round(
+        (analysis.atsScore || 0) * 0.35 +
+        (analysis.grammarScore || 0) * 0.20 +
+        (analysis.readability || 0) * 0.20 +
+        (analysis.structureScore || 0) * 0.25
+      )
+    : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -266,11 +280,12 @@ const AIAnalytics = () => {
             <div className="bg-gradient-to-br from-blue-600 to-cyan-600 rounded-2xl p-8 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-blue-100 mb-2">Overall ATS Score</p>
-                  <h2 className="text-6xl font-bold">{analysis.atsScore || 0}</h2>
+                  <p className="text-blue-100 mb-2">Overall Score</p>
+                  <h2 className="text-6xl font-bold">{computedOverall}%</h2>
                   <p className="text-xl mt-2 text-blue-100">
-                    {getScoreLabel(analysis.atsScore || 0)}
+                    {getScoreLabel(computedOverall)}
                   </p>
+                  <p className="text-sm text-blue-200 mt-1">ATS 35% · Grammar 20% · Readability 20% · Structure 25%</p>
                 </div>
                 <Award size={80} className="text-white opacity-20" />
               </div>

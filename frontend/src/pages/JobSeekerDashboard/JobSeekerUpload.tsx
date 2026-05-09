@@ -127,22 +127,40 @@ const JobSeekerUpload = () => {
           aiAnalysis: response.data.data.aiAnalysis,
         });
 
-        // Extract recommended keywords from AI suggestions
-        const techKeywords = ["Python", "SQL", "Tableau", "Power BI", "JavaScript", "React", "Node.js", "AWS", "Docker"];
-        setRecommendedKeywords(techKeywords);
+        // Extract recommended keywords from AI analysis
+        const aiKeywords = response.data.data.recommendedKeywords || 
+          response.data.data.aiAnalysis?.recommendedKeywords || [];
+        if (aiKeywords.length > 0) {
+          setRecommendedKeywords(aiKeywords);
+        } else {
+          // Fallback: use parsed skills as keywords
+          const skills = response.data.data.parsedData?.skills || [];
+          setRecommendedKeywords(skills.slice(0, 15));
+        }
 
         // Fetch recommended jobs based on resume
         setLoadingJobs(true);
-        const jobResponse = await axios.get(
-          `${API_URL}/api/jobseeker/jobs/${response.data.data.resumeId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+        try {
+          const jobResponse = await axios.post(
+            `${API_URL}/api/jobseeker/find-matching-jobs`,
+            { resumeId: response.data.data.resumeId },
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              timeout: 60000,
+            }
+          );
+          if (jobResponse.data.success) {
+            const jobs = jobResponse.data.data?.allMatchingJobs || [];
+            setRecommendedJobs(jobs);
+            // Cache for dashboard
+            localStorage.setItem('veriresume_cached_jobs', JSON.stringify(jobs));
+            localStorage.setItem('veriresume_jobs_timestamp', Date.now().toString());
           }
-        );
-        if (jobResponse.data.success && jobResponse.data.data) {
-          setRecommendedJobs(jobResponse.data.data);
+        } catch (jobErr: any) {
+          console.warn("Job fetch error (non-critical):", jobErr.message);
         }
 
         setFile(null);
@@ -556,7 +574,7 @@ const JobSeekerUpload = () => {
                         ))}
                       </div>
                       <p className="text-xs text-slate-600 mt-4">
-                        💡 These keywords are extracted from your resume. Use them in job searches to find matching positions!
+                        💡 These keywords were extracted by AI from your resume. Jobs are matched against these keywords!
                       </p>
                     </div>
                   )}

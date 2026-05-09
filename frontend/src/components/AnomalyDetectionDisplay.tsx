@@ -105,11 +105,11 @@ const AnomalyDetectionDisplay: React.FC<AnomalyDetectionDisplayProps> = ({
     <Card elevation={2} sx={{ my: 2 }}>
       <CardContent>
         {/* Header */}
-        <Box display="flex" alignItems="center" gap={2} mb={2}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
           <Box>
             {getSeverityIcon(anomalyDetection.severity)}
           </Box>
-          <Box flexGrow={1}>
+          <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6">
               Data Quality Analysis
             </Typography>
@@ -133,7 +133,7 @@ const AnomalyDetectionDisplay: React.FC<AnomalyDetectionDisplayProps> = ({
         {groupedIssues && Object.entries(groupedIssues).map(([type, issues]) => (
           <Accordion key={type} defaultExpanded={anomalyDetection.severity === 'high'}>
             <AccordionSummary expandIcon={<ExpandMore />}>
-              <Box display="flex" alignItems="center" gap={1}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Chip 
                   label={issues.length} 
                   size="small" 
@@ -164,7 +164,7 @@ const AnomalyDetectionDisplay: React.FC<AnomalyDetectionDisplayProps> = ({
 
         {/* Full Report */}
         {anomalyDetection.report && (
-          <Box mt={3} p={2} bgcolor="grey.100" borderRadius={1}>
+          <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
             <Typography variant="subtitle2" gutterBottom>
               Summary Report
             </Typography>
@@ -183,7 +183,7 @@ const AnomalyDetectionDisplay: React.FC<AnomalyDetectionDisplayProps> = ({
         )}
 
         {/* HR Recommendations */}
-        <Box mt={3}>
+        <Box sx={{ mt: 3 }}>
           <Typography variant="subtitle2" color="primary" gutterBottom>
             📋 HR Recommendations
           </Typography>
@@ -209,7 +209,7 @@ const AnomalyDetectionDisplay: React.FC<AnomalyDetectionDisplayProps> = ({
 
         {/* Detection Timestamp */}
         {anomalyDetection.detectedAt && (
-          <Typography variant="caption" color="text.secondary" display="block" mt={2}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
             Detected at: {new Date(anomalyDetection.detectedAt).toLocaleString()}
           </Typography>
         )}

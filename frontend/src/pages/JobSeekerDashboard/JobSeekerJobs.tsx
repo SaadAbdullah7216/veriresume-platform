@@ -84,6 +84,7 @@ const JobSeekerJobs = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"match" | "recent">("match");
+  const [minMatchFilter, setMinMatchFilter] = useState(35); // 35 = hide Low Match (<35%); 0 = show all
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
 
   // Application state
@@ -97,9 +98,19 @@ const JobSeekerJobs = () => {
 
   useEffect(() => {
     // Merge portal and external jobs
-    const merged: Job[] = [
-      ...portalJobs,
-      ...externalJobs.map((ej: any, idx: number) => ({
+    // Helper: check if a job URL is valid and not a bare domain root
+    const isValidJobUrl = (url?: string): boolean => {
+      if (!url || url === '#') return false;
+      try {
+        const u = new URL(url);
+        if (u.pathname === '/' && !u.search) return false;
+        return true;
+      } catch { return false; }
+    };
+
+    const mapped = externalJobs
+      .filter((ej: any) => isValidJobUrl(ej.url)) // drop jobs with invalid/broken URLs
+      .map((ej: any, idx: number) => ({
         _id: ej.id || `ext-${idx}-${Date.now()}`,
         title: ej.title || "Untitled",
         company: ej.company || "Unknown Company",
@@ -119,14 +130,15 @@ const JobSeekerJobs = () => {
         matchedSkills: ej.matchedSkills || [],
         missingSkills: ej.missingSkills || [],
         url: ej.url || "#",
-      })),
-    ];
+      }));
+
+    const merged: Job[] = [...portalJobs, ...mapped];
     setAllJobs(merged);
   }, [portalJobs, externalJobs]);
 
   useEffect(() => {
     filterJobs();
-  }, [allJobs, searchTerm, typeFilter, sourceFilter, sortBy]);
+  }, [allJobs, searchTerm, typeFilter, sourceFilter, sortBy, minMatchFilter]);
 
   // ═══════════════════════════════════════════════
   // Fetch resume data + HR-posted jobs + external jobs
@@ -153,8 +165,27 @@ const JobSeekerJobs = () => {
         const skills = resume.parsedData?.skills || [];
         const aiKeywords = resume.aiAnalysis?.recommendedKeywords || [];
         const techSkills = resume.aiAnalysis?.techSkills || [];
-        const allKeywords = [...new Set([...skills, ...aiKeywords, ...techSkills])]
+        let allKeywords = [...new Set([...skills, ...aiKeywords, ...techSkills])]
           .filter((k: string) => k && typeof k === "string" && k.length > 1 && k.length < 50);
+
+        // ── AI-filter: keep only real tech/professional skills (via Groq/Gemini) ──
+        if (allKeywords.length > 0) {
+          try {
+            const filterResponse = await axios.post(
+              `${API_URL}/api/filter-tech-keywords`,
+              { keywords: allKeywords },
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+            );
+            if (filterResponse.data.success && filterResponse.data.tech_keywords) {
+              console.log(`🔧 Tech filter: ${allKeywords.length} → ${filterResponse.data.tech_keywords.length} tech keywords`);
+              console.log(`   Filtered out: ${(filterResponse.data.filtered_out || []).join(', ')}`);
+              allKeywords = filterResponse.data.tech_keywords;
+            }
+          } catch (filterErr) {
+            console.warn("Tech keyword filter failed, showing all:", filterErr);
+          }
+        }
+
         setRecommendedKeywords(allKeywords);
       } else {
         setHasResume(false);
@@ -211,46 +242,115 @@ const JobSeekerJobs = () => {
       const cachedTimestamp = localStorage.getItem("veriresume_jobs_timestamp");
       const cacheAge = cachedTimestamp ? Date.now() - parseInt(cachedTimestamp) : Infinity;
 
+      let baseJobs: any[] = [];
+
       if (cachedJobs && cacheAge < 30 * 60 * 1000) {
         try {
           const jobs = JSON.parse(cachedJobs);
-          // Filter out Indeed jobs
-          const filtered = jobs.filter(
-            (j: any) => (j.source || "").toLowerCase() !== "indeed"
-          );
-          if (filtered.length > 0) {
-            setExternalJobs(filtered);
-            return;
+          if (jobs.length > 0) {
+            baseJobs = jobs;
           }
         } catch (e) {}
       }
 
-      // Fetch fresh from API
+      // Fetch fresh from APIs in parallel if no cache
       const token = localStorage.getItem("token");
-      const response = await axios.post(
-        `${API_URL}/api/jobseeker/find-matching-jobs`,
-        { resumeId: rid },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          timeout: 60000,
+      
+      if (baseJobs.length === 0) {
+        try {
+          const response = await axios.post(
+            `${API_URL}/api/jobseeker/find-matching-jobs`,
+            { resumeId: rid },
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              timeout: 60000,
+            }
+          );
+          if (response.data.success) {
+            baseJobs = response.data.data?.allMatchingJobs || [];
+          }
+        } catch (err: any) {
+          console.error("Free API jobs fetch error:", err);
         }
-      );
-
-      if (response.data.success) {
-        const jobs = response.data.data?.allMatchingJobs || [];
-        // Filter out Indeed jobs
-        const filtered = jobs.filter(
-          (j: any) => (j.source || "").toLowerCase() !== "indeed"
-        );
-        setExternalJobs(filtered);
-
-        // Update cache
-        localStorage.setItem("veriresume_cached_jobs", JSON.stringify(filtered));
-        localStorage.setItem("veriresume_jobs_timestamp", Date.now().toString());
       }
+
+      // Also fetch LinkedIn jobs in parallel
+      const resumeSkills = recommendedKeywords.slice(0, 5);
+      let linkedinJobs: any[] = [];
+      if (resumeSkills.length > 0) {
+        try {
+          const linkedinResp = await axios.post(
+            `${API_URL}/api/jobseeker/search-linkedin`,
+            {
+              keywords: resumeSkills,
+              limit: 20,
+              timeRange: "24h",
+            },
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              timeout: 60000,
+            }
+          );
+          if (linkedinResp.data.success) {
+            linkedinJobs = (linkedinResp.data.data?.jobs || []).map((j: any) => ({
+              ...j,
+              source: "LinkedIn",
+              matchScore: j.matchScore || 0,
+            }));
+            console.log(`✅ LinkedIn jobs for recommendations: ${linkedinJobs.length}`);
+          }
+        } catch (err: any) {
+          console.warn("LinkedIn jobs fetch for recommendations:", err.message);
+        }
+      }
+
+      // Also fetch Indeed jobs
+      let indeedJobs: any[] = [];
+      if (resumeSkills.length > 0) {
+        try {
+          const indeedResp = await axios.post(
+            `${API_URL}/api/jobseeker/search-indeed`,
+            {
+              keywords: resumeSkills,
+              country: "us",
+              maxResults: 15,
+            },
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              timeout: 90000,
+            }
+          );
+          if (indeedResp.data.success) {
+            indeedJobs = (indeedResp.data.data?.jobs || []).map((j: any) => ({
+              ...j,
+              source: j.source || "Indeed",
+              matchScore: j.matchScore || 0,
+            }));
+            console.log(`✅ Indeed jobs for recommendations: ${indeedJobs.length}`);
+          }
+        } catch (err: any) {
+          console.warn("Indeed jobs fetch for recommendations:", err.message);
+        }
+      }
+
+      // Merge all jobs (deduplicate by title+company)
+      const allExternal = [...baseJobs, ...linkedinJobs, ...indeedJobs];
+      const seen = new Set<string>();
+      const dedupedJobs = allExternal.filter((job: any) => {
+        const key = `${(job.title || '').toLowerCase().trim()}|${(job.company || '').toLowerCase().trim()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      setExternalJobs(dedupedJobs);
+
+      // Update cache
+      localStorage.setItem("veriresume_cached_jobs", JSON.stringify(dedupedJobs));
+      localStorage.setItem("veriresume_jobs_timestamp", Date.now().toString());
     } catch (err: any) {
       console.error("External jobs fetch error:", err);
     } finally {
@@ -263,6 +363,13 @@ const JobSeekerJobs = () => {
   // ═══════════════════════════════════════════════
   const filterJobs = () => {
     let filtered = allJobs;
+
+    // Minimum match score filter — portal jobs always pass through
+    if (minMatchFilter > 0) {
+      filtered = filtered.filter(
+        (job) => job.source === "Portal" || (job.matchScore || 0) >= minMatchFilter
+      );
+    }
 
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
@@ -284,10 +391,24 @@ const JobSeekerJobs = () => {
     if (sourceFilter !== "all") {
       if (sourceFilter === "portal") {
         filtered = filtered.filter((job) => job.source === "Portal");
-      } else {
+      } else if (sourceFilter === "external") {
         filtered = filtered.filter((job) => job.source !== "Portal");
+      } else {
+        // Filter by specific platform name (indeed, linkedin, glassdoor, remotive, etc.)
+        filtered = filtered.filter(
+          (job) => (job.source || "").toLowerCase() === sourceFilter.toLowerCase()
+        );
       }
     }
+
+    // Deduplicate by normalized title + company
+    const seen = new Set<string>();
+    filtered = filtered.filter((job) => {
+      const key = `${(job.title || '').toLowerCase().trim()}|${(job.company || '').toLowerCase().trim()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
     filtered.sort((a, b) => {
       if (sortBy === "match") {
@@ -377,11 +498,13 @@ const JobSeekerJobs = () => {
   const getSourceBadge = (source: string) => {
     const s = (source || "").toLowerCase();
     if (s === "portal") return { label: "VeriResume", color: "bg-purple-100 text-purple-700 border-purple-200" };
+    if (s === "indeed") return { label: "Indeed", color: "bg-indigo-100 text-indigo-700 border-indigo-200" };
+    if (s === "linkedin") return { label: "LinkedIn", color: "bg-sky-100 text-sky-700 border-sky-200" };
+    if (s === "glassdoor") return { label: "Glassdoor", color: "bg-emerald-100 text-emerald-700 border-emerald-200" };
     if (s === "remotive") return { label: "Remotive", color: "bg-blue-100 text-blue-700 border-blue-200" };
-    if (s === "rozee") return { label: "Rozee.pk", color: "bg-green-100 text-green-700 border-green-200" };
+    if (s === "jobicy") return { label: "Jobicy", color: "bg-purple-100 text-purple-700 border-purple-200" };
     if (s === "arbeitnow") return { label: "ArbeitNow", color: "bg-orange-100 text-orange-700 border-orange-200" };
-    if (s === "themuse") return { label: "TheMuse", color: "bg-pink-100 text-pink-700 border-pink-200" };
-    if (s === "usajobs") return { label: "USAJobs", color: "bg-indigo-100 text-indigo-700 border-indigo-200" };
+    if (s === "usajobs") return { label: "USAJobs", color: "bg-red-100 text-red-700 border-red-200" };
     return { label: source || "External", color: "bg-slate-100 text-slate-600 border-slate-200" };
   };
 
@@ -560,7 +683,7 @@ const JobSeekerJobs = () => {
 
           {/* ═══ FILTER BAR ═══ */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 mb-6">
-            <div className="grid md:grid-cols-5 gap-3">
+            <div className="grid md:grid-cols-6 gap-3">
               <div className="relative md:col-span-2">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
@@ -570,6 +693,20 @@ const JobSeekerJobs = () => {
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-11 pr-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm"
                 />
+              </div>
+              <div className="flex items-center gap-2">
+                <Star className="text-slate-400 flex-shrink-0" size={18} />
+                <select
+                  value={minMatchFilter}
+                  onChange={(e) => setMinMatchFilter(parseInt(e.target.value))}
+                  className="flex-1 px-3 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm font-medium"
+                >
+                  <option value={0}>All Jobs</option>
+                  <option value={35}>Partial+ (≥35%)</option>
+                  <option value={50}>Good Match (≥50%)</option>
+                  <option value={70}>Strong Match (≥70%)</option>
+                  <option value={85}>Excellent (≥85%)</option>
+                </select>
               </div>
               <div className="flex items-center gap-2">
                 <Filter className="text-slate-400 flex-shrink-0" size={18} />
@@ -595,6 +732,12 @@ const JobSeekerJobs = () => {
                   <option value="all">All Sources</option>
                   <option value="portal">VeriResume Portal</option>
                   <option value="external">External Platforms</option>
+                  <option value="indeed">Indeed</option>
+                  <option value="linkedin">LinkedIn</option>
+                  <option value="glassdoor">Glassdoor</option>
+                  <option value="remotive">Remotive</option>
+                  <option value="arbeitnow">ArbeitNow</option>
+                  <option value="usajobs">USAJobs</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -609,9 +752,27 @@ const JobSeekerJobs = () => {
                 </select>
               </div>
             </div>
-            <p className="text-xs text-slate-500 mt-3">
-              Showing <span className="font-bold text-slate-700">{filteredJobs.length}</span> of {allJobs.length} jobs
-            </p>
+            <div className="flex items-center justify-between mt-3">
+              <p className="text-xs text-slate-500">
+                Showing <span className="font-bold text-slate-700">{filteredJobs.length}</span> matched jobs
+                {minMatchFilter > 0 && allJobs.length > filteredJobs.length && (
+                  <button
+                    onClick={() => setMinMatchFilter(0)}
+                    className="ml-2 text-cyan-600 hover:underline font-semibold"
+                  >
+                    Show all {allJobs.length}
+                  </button>
+                )}
+              </p>
+              {minMatchFilter === 0 && (
+                <button
+                  onClick={() => setMinMatchFilter(1)}
+                  className="text-xs text-cyan-600 hover:underline font-semibold"
+                >
+                  Show only skill-matched jobs
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ═══ NO JOBS ═══ */}

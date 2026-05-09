@@ -25,7 +25,6 @@ import {
   AccordionDetails,
   Grid,
   Divider,
-  Badge,
   IconButton,
   Tooltip,
 } from '@mui/material';
@@ -289,7 +288,7 @@ const BulkResumeScreening: React.FC = () => {
               label="Anomaly Threshold"
               value={anomalyThreshold}
               onChange={(e) => setAnomalyThreshold(Number(e.target.value))}
-              inputProps={{ min: 0, max: 100 }}
+              slotProps={{ htmlInput: { min: 0, max: 100 } }}
               sx={{ width: 200 }}
             />
             <Tooltip title="Candidates with anomaly weight above this threshold will be rejected">
@@ -345,7 +344,7 @@ const BulkResumeScreening: React.FC = () => {
 
           {/* Summary Cards */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} sm={3}>
+            <Grid size={{ xs: 12, sm: 3 }}>
               <Card>
                 <CardContent>
                   <Typography color="text.secondary" gutterBottom>
@@ -355,7 +354,7 @@ const BulkResumeScreening: React.FC = () => {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={3}>
+            <Grid size={{ xs: 12, sm: 3 }}>
               <Card sx={{ bgcolor: 'success.light' }}>
                 <CardContent>
                   <Typography color="text.secondary" gutterBottom>
@@ -365,7 +364,7 @@ const BulkResumeScreening: React.FC = () => {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={3}>
+            <Grid size={{ xs: 12, sm: 3 }}>
               <Card sx={{ bgcolor: 'error.light' }}>
                 <CardContent>
                   <Typography color="text.secondary" gutterBottom>
@@ -375,7 +374,7 @@ const BulkResumeScreening: React.FC = () => {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={3}>
+            <Grid size={{ xs: 12, sm: 3 }}>
               <Card>
                 <CardContent>
                   <Typography color="text.secondary" gutterBottom>

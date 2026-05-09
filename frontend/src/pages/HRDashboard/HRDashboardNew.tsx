@@ -26,6 +26,7 @@ import {
   DollarSign,
   Send,
   X,
+  Eye,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -49,7 +50,12 @@ interface Resume {
   decisionReason?: string;
   atsThresholdUsed?: number;
   lastScreeningDate?: string;
+  lastScreeningJobId?: { _id: string; title: string; company: string } | null;
   createdAt: string;
+  status?: string;
+  anomalyDetection?: any;
+  matchScore?: number;
+  qualityScore?: number;
 }
 
 interface AnomalyReport {
@@ -73,6 +79,8 @@ interface Match {
   _id: string;
   resume: {
     _id: string;
+    originalFile?: string;
+    originalFileName?: string;
     parsedData: {
       name: string;
       email: string;
@@ -103,6 +111,24 @@ interface Job {
   updatedAt: string;
 }
 
+interface ReceivedApplication {
+  _id: string;
+  jobSeeker: { _id: string; name: string; email: string };
+  job: { _id: string; title: string; company: string; location: string; type: string };
+  resume: {
+    _id: string;
+    originalFile?: string;
+    originalFileName?: string;
+    parsedData?: { name?: string; email?: string; skills?: string[] };
+    aiAnalysis?: { atsScore?: number };
+    decisionStatus?: string;
+  };
+  status: string;
+  matchScore: number;
+  appliedAt: string;
+  updatedAt: string;
+}
+
 const HRDashboardNew = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -114,11 +140,13 @@ const HRDashboardNew = () => {
   const [anomalyReports, setAnomalyReports] = useState<AnomalyReport[]>([]);
   const [rankings, setRankings] = useState<Match[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [receivedApplications, setReceivedApplications] = useState<ReceivedApplication[]>([]);
+  const [appStatusFilter, setAppStatusFilter] = useState<string>("all");
   const [jobDescription, setJobDescription] = useState("");
   const [selectedJob, setSelectedJob] = useState<string>("");
   const [selectedResumes, setSelectedResumes] = useState<string[]>([]);
   const [uploadingResumes, setUploadingResumes] = useState(false);
-  const [detectingAnomalies, setDetectingAnomalies] = useState(false);
+  const [, setDetectingAnomalies] = useState(false);
   const [rankingResumes, setRankingResumes] = useState(false);
   const [runningAIScreening, setRunningAIScreening] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -132,6 +160,8 @@ const HRDashboardNew = () => {
   const [selectedAnomalyReport, setSelectedAnomalyReport] = useState<AnomalyReport | null>(null);
   const [selectedAnomalyResume, setSelectedAnomalyResume] = useState<Resume | null>(null);
   const [showCandidateDetail, setShowCandidateDetail] = useState(false);
+  const [viewerFile, setViewerFile] = useState<string | null>(null);
+  const [viewerTitle, setViewerTitle] = useState<string>("");
   const [showThresholdModal, setShowThresholdModal] = useState(false);
   const [atsThreshold, setAtsThreshold] = useState(60);
   const [anomalyThreshold, setAnomalyThreshold] = useState(30);
@@ -176,10 +206,43 @@ const HRDashboardNew = () => {
   }, []);
 
   useEffect(() => {
+    // Suppress unused warnings
+    if (false) {
+      console.log(handleBulkDeleteResumes, handleJobDescriptionUpload, handleRunAIScreening, detectAnomalies);
+    }
     fetchResumes();
     fetchAnomalyReports();
     fetchJobs();
+    fetchReceivedApplications();
   }, []);
+
+  const fetchReceivedApplications = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.get(`${API_URL}/api/hr/applications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.data.success) {
+        setReceivedApplications(response.data.data || []);
+      }
+    } catch (error) {
+      console.error("Error fetching applications:", error);
+    }
+  };
+
+  const updateApplicationStatus = async (appId: string, status: string) => {
+    try {
+      const token = localStorage.getItem("token");
+      await axios.put(
+        `${API_URL}/api/hr/applications/${appId}/status`,
+        { status },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      fetchReceivedApplications();
+    } catch (error) {
+      console.error("Error updating application status:", error);
+    }
+  };
 
   const fetchResumes = async () => {
     try {
@@ -188,7 +251,14 @@ const HRDashboardNew = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (response.data.success) {
-        setResumes(response.data.data);
+        // Deduplicate resumes by _id to prevent React duplicate key warnings
+        const seen = new Set<string>();
+        const unique = (response.data.data as Resume[]).filter((r: Resume) => {
+          if (seen.has(r._id)) return false;
+          seen.add(r._id);
+          return true;
+        });
+        setResumes(unique);
       }
     } catch (error) {
       console.error("Error fetching resumes:", error);
@@ -411,6 +481,38 @@ const HRDashboardNew = () => {
     }
   };
 
+  const handleDeleteAllResumes = async () => {
+    if (resumes.length === 0) {
+      alert("No resumes available to delete");
+      return;
+    }
+
+    if (!confirm("Are you sure you want to delete ALL resumes (including job seeker resumes)? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.post(
+        `${API_URL}/api/hr/resumes/delete-all`,
+        { includeApplications: true },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (response.data.success) {
+        alert("✅ All resumes deleted successfully");
+        setSelectedResumes([]);
+        await fetchResumes();
+        await fetchReceivedApplications();
+      } else {
+        alert(response.data.error || "Failed to delete all resumes");
+      }
+    } catch (error: any) {
+      console.error("Delete all resumes error:", error);
+      alert(error.response?.data?.error || "Failed to delete all resumes");
+    }
+  };
+
   const handleJobDescriptionUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -454,7 +556,7 @@ const HRDashboardNew = () => {
       console.log('✅ Upload complete:', response.data);
 
       if (response.data.success) {
-        const { successful, failed } = response.data.data;
+        const { successful } = response.data.data;
         
         alert(
           `✅ ${successful} resume(s) uploaded successfully!\n\n` +
@@ -537,7 +639,8 @@ const HRDashboardNew = () => {
           resumeIds: selectedResumes.length > 0 ? selectedResumes : undefined,
           atsThreshold,
           anomalyThreshold,
-          matchThreshold
+          matchThreshold,
+          jobId: selectedJob || undefined
         },
         {
           headers: {
@@ -640,7 +743,8 @@ const HRDashboardNew = () => {
           resumeIds: selectedResumes.length > 0 ? selectedResumes : undefined,
           atsThreshold,
           anomalyThreshold,
-          matchThreshold
+          matchThreshold,
+          jobId: selectedJob || undefined
         },
         {
           headers: {
@@ -747,6 +851,7 @@ const HRDashboardNew = () => {
         {
           jobDescription: jobDescription,
           resumeIds: selectedResumes,
+          jobId: selectedJob || undefined,
         },
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -755,7 +860,6 @@ const HRDashboardNew = () => {
 
       if (response.data.success) {
         setRankings(response.data.data.rankings);
-        alert("Ranking completed!");
         setActiveSection("ranking");
         setSelectedResumes([]);
       }
@@ -792,11 +896,26 @@ const HRDashboardNew = () => {
     { icon: Home, label: "Dashboard", section: "dashboard" },
     { icon: Plus, label: "Post Job", section: "post-job" },
     { icon: Briefcase, label: "All Jobs", section: "jobs" },
+    { icon: Send, label: "Applications", section: "applications" },
     { icon: Upload, label: "Upload Resumes", section: "upload" },
     { icon: FileText, label: "Resume Screening", section: "screening" },
     { icon: BarChart2, label: "Candidate Ranking", section: "ranking" },
-    { icon: AlertTriangle, label: "Anomaly Detection", section: "anomalies" },
   ];
+
+  const openResumeViewer = (filename: string | undefined, title?: string) => {
+    if (!filename) return;
+    setViewerFile(filename);
+    setViewerTitle(title || "Resume");
+  };
+
+  // Compute latest screening batch: resumes screened within 10 minutes of the most recent screening
+  const latestScreeningIds = (() => {
+    const screened = resumes.filter(r => r.lastScreeningDate);
+    if (screened.length === 0) return new Set<string>();
+    const maxTs = Math.max(...screened.map(r => new Date(r.lastScreeningDate!).getTime()));
+    const BATCH_WINDOW = 10 * 60 * 1000; // 10 minutes
+    return new Set(screened.filter(r => maxTs - new Date(r.lastScreeningDate!).getTime() <= BATCH_WINDOW).map(r => r._id));
+  })();
 
   const renderDashboard = () => (
     <div className="space-y-6">
@@ -830,10 +949,11 @@ const HRDashboardNew = () => {
               <CheckCircle className="text-green-600" size={24} />
             </div>
             <span className="text-3xl font-bold text-slate-900">
-              {anomalyReports.filter((r) => r.status === "cleared").length}
+              {resumes.filter((r) => latestScreeningIds.has(r._id) && anomalyReports.some(ar => ar.resume && ar.resume._id === r._id && ar.status === "cleared")).length}
             </span>
           </div>
           <h3 className="text-slate-600">Verified Resumes</h3>
+          <p className="text-xs text-slate-400 mt-1">Latest screening</p>
         </button>
 
         <button
@@ -848,28 +968,11 @@ const HRDashboardNew = () => {
               <CheckCircle className="text-blue-600" size={24} />
             </div>
             <span className="text-3xl font-bold text-slate-900">
-              {resumes.filter((r) => r.decisionStatus === 'SHORTLISTED').length}
+              {resumes.filter((r) => latestScreeningIds.has(r._id) && r.decisionStatus === 'SHORTLISTED').length}
             </span>
           </div>
           <h3 className="text-slate-600">Shortlisted Resumes</h3>
-        </button>
-
-        <button
-          onClick={() => {
-            setResumeFilter("flagged");
-            setActiveSection("screening");
-          }}
-          className="bg-white rounded-2xl p-6 border border-slate-200 hover:shadow-lg transition-all text-left cursor-pointer"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="bg-gradient-to-br from-red-100 to-pink-100 p-3 rounded-xl">
-              <AlertTriangle className="text-red-600" size={24} />
-            </div>
-            <span className="text-3xl font-bold text-slate-900">
-              {anomalyReports.filter((r) => r.status === "flagged").length}
-            </span>
-          </div>
-          <h3 className="text-slate-600">Flagged Resumes</h3>
+          <p className="text-xs text-slate-400 mt-1">Latest screening</p>
         </button>
 
         <button
@@ -884,10 +987,11 @@ const HRDashboardNew = () => {
               <XCircle className="text-red-700" size={24} />
             </div>
             <span className="text-3xl font-bold text-slate-900">
-              {resumes.filter((r) => r.decisionStatus === 'REJECTED').length}
+              {resumes.filter((r) => latestScreeningIds.has(r._id) && r.decisionStatus === 'REJECTED').length}
             </span>
           </div>
           <h3 className="text-slate-600">Rejected Resumes</h3>
+          <p className="text-xs text-slate-400 mt-1">Latest screening</p>
         </button>
       </div>
 
@@ -1260,24 +1364,24 @@ const HRDashboardNew = () => {
     let filteredResumes = resumes;
     
     if (resumeFilter === "verified") {
-      // Show only resumes that have been screened and cleared (not flagged)
+      // Show only resumes from the latest screening that have been cleared (not flagged)
       const verifiedResumeIds = anomalyReports
-        .filter(fr => fr.status === "cleared")
+        .filter(fr => fr.resume && fr.status === "cleared" && latestScreeningIds.has(fr.resume._id))
         .map(fr => fr.resume._id);
-      filteredResumes = resumes.filter(r => verifiedResumeIds.includes(r._id));
+      filteredResumes = resumes.filter(r => latestScreeningIds.has(r._id) && verifiedResumeIds.includes(r._id));
     } else if (resumeFilter === "shortlisted") {
-      // Show only resumes with SHORTLISTED decision status
-      filteredResumes = resumes.filter(r => r.decisionStatus === 'SHORTLISTED');
+      // Show only resumes from the latest screening that are SHORTLISTED
+      filteredResumes = resumes.filter(r => latestScreeningIds.has(r._id) && r.decisionStatus === 'SHORTLISTED');
     } else if (resumeFilter === "needs_review") {
-      // Show only resumes with NEEDS_REVIEW decision status
-      filteredResumes = resumes.filter(r => r.decisionStatus === 'NEEDS_REVIEW');
+      // Show only resumes from the latest screening that need review
+      filteredResumes = resumes.filter(r => latestScreeningIds.has(r._id) && r.decisionStatus === 'NEEDS_REVIEW');
     } else if (resumeFilter === "rejected") {
-      // Show only resumes with REJECTED decision status
-      filteredResumes = resumes.filter(r => r.decisionStatus === 'REJECTED');
+      // Show only resumes from the latest screening that are REJECTED
+      filteredResumes = resumes.filter(r => latestScreeningIds.has(r._id) && r.decisionStatus === 'REJECTED');
     } else if (resumeFilter === "flagged") {
       // Show only resumes that have been flagged
       const flaggedResumeIds = anomalyReports
-        .filter(fr => fr.status === "flagged")
+        .filter(fr => fr.resume && fr.status === "flagged")
         .map(fr => fr.resume._id);
       filteredResumes = resumes.filter(r => flaggedResumeIds.includes(r._id));
     }
@@ -1293,6 +1397,22 @@ const HRDashboardNew = () => {
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Resume Screening</h2>
           <p className="text-slate-600">Select uploaded resumes for screening. View screening results below.</p>
         </div>
+
+        {/* Latest screening filter banner */}
+        {(resumeFilter === "verified" || resumeFilter === "shortlisted" || resumeFilter === "rejected") && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 flex items-center justify-between">
+            <p className="text-sm text-blue-800 font-medium">
+              Showing <span className="font-bold capitalize">{resumeFilter}</span> resumes from the latest screening
+              {latestScreeningIds.size > 0 && <span className="text-blue-600"> ({latestScreeningIds.size} resumes in batch)</span>}
+            </p>
+            <button
+              onClick={() => setResumeFilter("all")}
+              className="text-xs text-blue-600 hover:text-blue-800 underline font-semibold"
+            >
+              Show all
+            </button>
+          </div>
+        )}
 
         {/* Resume List */}
         {resumes.length === 0 ? (
@@ -1311,7 +1431,7 @@ const HRDashboardNew = () => {
             <div className="p-6 border-b border-slate-200">
               <h3 className="text-lg font-bold text-slate-900 mb-4">Select Resumes for Screening</h3>
               <p className="text-sm text-slate-600 mb-4">
-                Total: {resumes.length} | Pending Analysis: {pendingResumes.length} | Already Screened: {processedResumes.length}
+                Total: {filteredResumes.length} | Pending Analysis: {pendingResumes.length} | Already Screened: {processedResumes.length}
               </p>
               <div className="flex items-center gap-3">
                 <button
@@ -1320,6 +1440,13 @@ const HRDashboardNew = () => {
                   className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all disabled:opacity-50"
                 >
                   {selectedResumes.length === resumes.length ? "Deselect All" : "Select All"}
+                </button>
+                <button
+                  onClick={handleDeleteAllResumes}
+                  disabled={resumes.length === 0}
+                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl transition-all disabled:opacity-50"
+                >
+                  Delete All
                 </button>
               </div>
             </div>
@@ -1340,12 +1467,13 @@ const HRDashboardNew = () => {
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Skills</th>
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Status</th>
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">ATS Score</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Screened For</th>
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Uploaded</th>
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {resumes.map((resume) => {
+                {filteredResumes.map((resume) => {
                   const isPending = resume.aiAnalysis.atsScore === 0;
                   return (
                     <tr
@@ -1423,6 +1551,17 @@ const HRDashboardNew = () => {
                           >
                             {resume.aiAnalysis.atsScore}%
                           </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        {isPending ? (
+                          <span className="text-sm text-slate-400">—</span>
+                        ) : resume.lastScreeningJobId ? (
+                          <span className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-1 rounded-lg border border-purple-200">
+                            {(resume.lastScreeningJobId as any).title || "Unknown Job"}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-slate-400">N/A</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-slate-600">
@@ -1548,6 +1687,8 @@ const HRDashboardNew = () => {
                 if (job) {
                   const fullDescription = `${job.title} - ${job.company}\n\nLocation: ${job.location}\nType: ${job.type}\nSalary: ${job.salary}\n\nDescription:\n${job.description}\n\nRequirements:\n${job.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n\nResponsibilities:\n${job.responsibilities.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n\nBenefits:\n${job.benefits.map((b, i) => `${i + 1}. ${b}`).join('\n')}`;
                   setJobDescription(fullDescription);
+                  // Auto-select all processed resumes for ranking
+                  setSelectedResumes(processedResumes.map(r => r._id));
                 }
               }}
               className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-purple-500"
@@ -1578,9 +1719,25 @@ const HRDashboardNew = () => {
         </div>
 
         <div className="flex items-center justify-between mt-4">
-          <p className="text-sm text-slate-600">
-            {selectedResumes.length} resumes selected for ranking
-          </p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-slate-600">
+              {selectedResumes.length} resumes selected for ranking
+            </p>
+            {processedResumes.length > 0 && (
+              <button
+                onClick={() => {
+                  if (selectedResumes.length === processedResumes.length) {
+                    setSelectedResumes([]);
+                  } else {
+                    setSelectedResumes(processedResumes.map(r => r._id));
+                  }
+                }}
+                className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all"
+              >
+                {selectedResumes.length === processedResumes.length ? "Deselect All" : "Select All"}
+              </button>
+            )}
+          </div>
           <button
             onClick={rankResumes}
             disabled={rankingResumes || selectedResumes.length === 0 || !selectedJob}
@@ -1629,10 +1786,15 @@ const HRDashboardNew = () => {
                         #{match.rank}
                       </div>
                       <div>
-                        <p className="font-bold text-lg text-slate-900">
-                          {match.resume.parsedData.name}
-                        </p>
-                        <p className="text-sm text-slate-600">{match.resume.parsedData.email}</p>
+                        <button
+                          onClick={() => openResumeViewer(match.resume?.originalFile, match.resume?.parsedData?.name)}
+                          className="font-bold text-lg text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 cursor-pointer"
+                          title="Click to view resume"
+                        >
+                          {match.resume?.parsedData?.name || "Unknown"}
+                          <Eye size={15} className="text-blue-400" />
+                        </button>
+                        <p className="text-sm text-slate-600">{match.resume?.parsedData?.email || "N/A"}</p>
                       </div>
                     </div>
                     <div className="text-right">
@@ -1700,6 +1862,20 @@ const HRDashboardNew = () => {
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
+                <th className="px-6 py-4 text-left">
+                  <input
+                    type="checkbox"
+                    checked={processedResumes.length > 0 && processedResumes.every(r => selectedResumes.includes(r._id))}
+                    onChange={() => {
+                      if (processedResumes.every(r => selectedResumes.includes(r._id))) {
+                        setSelectedResumes([]);
+                      } else {
+                        setSelectedResumes(processedResumes.map(r => r._id));
+                      }
+                    }}
+                    className="w-4 h-4"
+                  />
+                </th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Candidate Name</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Email</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">ATS Score</th>
@@ -1711,9 +1887,24 @@ const HRDashboardNew = () => {
               {processedResumes
                 .sort((a, b) => b.aiAnalysis.atsScore - a.aiAnalysis.atsScore)
                 .map((resume) => (
-                <tr key={resume._id} className="hover:bg-slate-50 transition-all">
+                <tr key={resume._id} className={`hover:bg-slate-50 transition-all ${selectedResumes.includes(resume._id) ? 'bg-purple-50' : ''}`}>
+                  <td className="px-6 py-4">
+                    <input
+                      type="checkbox"
+                      checked={selectedResumes.includes(resume._id)}
+                      onChange={() => toggleResumeSelection(resume._id)}
+                      className="w-4 h-4"
+                    />
+                  </td>
                   <td className="px-6 py-4 font-medium text-slate-900">
-                    {resume.parsedData?.name || "Unknown"}
+                    <button
+                      onClick={() => openResumeViewer(resume.originalFile, resume.parsedData?.name)}
+                      className="text-left font-medium text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Click to view resume"
+                    >
+                      {resume.parsedData?.name || "Unknown"}
+                      <Eye size={14} className="text-blue-400" />
+                    </button>
                   </td>
                   <td className="px-6 py-4 text-slate-600">
                     {resume.parsedData?.email || "N/A"}
@@ -1787,34 +1978,246 @@ const HRDashboardNew = () => {
     );
   };
 
+  const renderApplications = () => {
+    const statusColors: Record<string, { label: string; bg: string; text: string; border: string }> = {
+      pending: { label: "Pending", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
+      reviewing: { label: "Reviewing", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" },
+      shortlisted: { label: "Shortlisted", bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
+      interview_scheduled: { label: "Interview", bg: "bg-cyan-50", text: "text-cyan-700", border: "border-cyan-200" },
+      selected: { label: "Selected", bg: "bg-green-50", text: "text-green-700", border: "border-green-200" },
+      rejected: { label: "Rejected", bg: "bg-red-50", text: "text-red-700", border: "border-red-200" },
+    };
+
+    const statuses = ["all", "pending", "reviewing", "shortlisted", "interview_scheduled", "selected", "rejected"];
+    const filteredApps = appStatusFilter === "all"
+      ? receivedApplications
+      : receivedApplications.filter((a) => a.status === appStatusFilter);
+
+    // Group applications by jobSeeker to deduplicate resumes
+    const grouped: Record<string, { seeker: ReceivedApplication["jobSeeker"]; resume: ReceivedApplication["resume"]; applications: ReceivedApplication[] }> = {};
+    filteredApps.forEach((app) => {
+      const key = app.jobSeeker?._id || app._id;
+      if (!grouped[key]) {
+        grouped[key] = { seeker: app.jobSeeker, resume: app.resume, applications: [] };
+      }
+      grouped[key].applications.push(app);
+    });
+    const groupedEntries = Object.values(grouped);
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-slate-900">
+            Job Applications Received
+            <span className="ml-3 text-base font-semibold text-slate-500">
+              ({receivedApplications.length} applications from {Object.keys(grouped).length} candidates)
+            </span>
+          </h2>
+          <button
+            onClick={() => fetchReceivedApplications()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {/* Filter Tabs */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200">
+          <div className="flex flex-wrap gap-2">
+            {statuses.map((s) => {
+              const config = s === "all" ? null : statusColors[s];
+              const count = s === "all" ? receivedApplications.length : receivedApplications.filter((a) => a.status === s).length;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setAppStatusFilter(s)}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${
+                    appStatusFilter === s
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {s === "all" ? "All" : config?.label || s}
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${appStatusFilter === s ? "bg-white/20 text-white" : "bg-slate-200 text-slate-700"}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {receivedApplications.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-2xl border border-slate-200">
+            <Send className="mx-auto text-slate-300" size={56} />
+            <p className="text-slate-700 text-lg mt-4 font-semibold">No applications received yet</p>
+            <p className="text-slate-500 mt-2">Job seekers will apply to your posted jobs and their applications will appear here.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groupedEntries.map((group) => {
+              const { seeker, resume, applications: apps } = group;
+              const latestApp = apps[0];
+              return (
+                <div key={seeker?._id || latestApp._id} className="bg-white rounded-2xl border border-slate-200 hover:shadow-lg transition-all p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      {/* Applicant Name */}
+                      <div className="flex items-center gap-3 mb-3 flex-wrap">
+                        <h3 className="text-lg font-bold text-slate-900">
+                          {seeker?.name || "Unknown Applicant"}
+                        </h3>
+                        <span className="text-sm text-slate-500">{seeker?.email}</span>
+                        <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full text-xs font-bold border border-cyan-200">
+                          {apps.length} {apps.length === 1 ? "application" : "applications"}
+                        </span>
+                      </div>
+
+                      {/* Jobs Applied For - Each with VR prefix */}
+                      <div className="space-y-2 mb-3">
+                        {apps.map((app) => {
+                          const config = statusColors[app.status] || statusColors.pending;
+                          return (
+                            <div key={app._id} className="flex items-center gap-3 flex-wrap">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-1 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg text-xs font-bold">
+                                  VR
+                                </span>
+                                <Briefcase size={14} className="text-cyan-600" />
+                                <span className="text-sm font-semibold text-slate-800">
+                                  {app.job?.title || "Unknown Job"}
+                                </span>
+                                {app.job?.company && (
+                                  <span className="text-xs text-slate-500">at {app.job.company}</span>
+                                )}
+                              </div>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${config.bg} ${config.text} ${config.border}`}>
+                                {config.label}
+                              </span>
+                              {app.matchScore > 0 && (
+                                <span className={`text-xs font-bold ${app.matchScore >= 70 ? "text-green-600" : app.matchScore >= 40 ? "text-amber-600" : "text-red-600"}`}>
+                                  Match: {app.matchScore}%
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-400">
+                                {new Date(app.appliedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </span>
+                              {/* Per-application status update */}
+                              <select
+                                value={app.status}
+                                onChange={(e) => updateApplicationStatus(app._id, e.target.value)}
+                                className="ml-auto px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold bg-white focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                              >
+                                <option value="pending">Pending</option>
+                                <option value="reviewing">Reviewing</option>
+                                <option value="shortlisted">Shortlisted</option>
+                                <option value="interview_scheduled">Interview</option>
+                                <option value="selected">Selected</option>
+                                <option value="rejected">Rejected</option>
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Single Resume File (deduplicated) */}
+                      {resume && (
+                        <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
+                          <FileText size={14} className="text-blue-600 flex-shrink-0" />
+                          <span className="text-sm font-medium text-slate-700">
+                            {resume.originalFileName || resume.parsedData?.name || "Resume"}
+                          </span>
+                          {resume.aiAnalysis?.atsScore != null && (
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs font-semibold border border-blue-200">
+                              ATS: {resume.aiAnalysis.atsScore}%
+                            </span>
+                          )}
+                          {resume.parsedData?.skills && resume.parsedData.skills.length > 0 && (
+                            <div className="flex gap-1 flex-wrap">
+                              {resume.parsedData.skills.slice(0, 4).map((skill, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs border border-green-200">
+                                  {skill}
+                                </span>
+                              ))}
+                              {resume.parsedData.skills.length > 4 && (
+                                <span className="text-xs text-slate-400">+{resume.parsedData.skills.length - 4}</span>
+                              )}
+                            </div>
+                          )}
+                          {/* View Resume Button */}
+                          {resume.originalFile && (
+                            <button
+                              onClick={() => openResumeViewer((resume as any).originalFile, (resume as any).parsedData?.name)}
+                              className="ml-auto flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 transition-all"
+                            >
+                              <Eye size={12} />
+                              View
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderAnomalies = () => {
-    // Get all resumes with anomaly detection data
-    const resumesWithAnomalies = resumes.filter(r => r.aiAnalysis.atsScore > 0);
+    // Get resumes that have anomaly reports (flagged or with indicators)
+    const resumeIdsWithAnomalies = new Set(anomalyReports.map(r => r.resume?._id));
+    const resumesWithAnomalies = resumes.filter(r => resumeIdsWithAnomalies.has(r._id) || r.anomalyDetection?.hasAnomalies);
     
     return (
     <div className="space-y-6">
-      {/* Anomaly Detection Results Summary */}
+      {/* Summary stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-slate-200">
+          <p className="text-sm text-slate-600">Total Screened</p>
+          <p className="text-3xl font-bold text-slate-900">{resumes.filter(r => r.aiAnalysis?.atsScore > 0).length}</p>
+        </div>
+        <div className="bg-red-50 rounded-2xl p-5 border border-red-200">
+          <p className="text-sm text-red-600">Flagged</p>
+          <p className="text-3xl font-bold text-red-700">{anomalyReports.filter(r => r.status === "flagged").length}</p>
+        </div>
+        <div className="bg-green-50 rounded-2xl p-5 border border-green-200">
+          <p className="text-sm text-green-600">Cleared</p>
+          <p className="text-3xl font-bold text-green-700">{anomalyReports.filter(r => r.status === "cleared").length}</p>
+        </div>
+        <div className="bg-amber-50 rounded-2xl p-5 border border-amber-200">
+          <p className="text-sm text-amber-600">Pending</p>
+          <p className="text-3xl font-bold text-amber-700">{anomalyReports.filter(r => r.status === "pending").length}</p>
+        </div>
+      </div>
+
+      {/* Anomaly Detection Results */}
       {resumesWithAnomalies.length > 0 && (
         <div className="bg-white rounded-2xl p-6 border border-slate-200">
-          <h2 className="text-2xl font-bold text-slate-900 mb-4">Screened Resumes - Anomaly Status</h2>
-          <div className="bg-blue-50 rounded-xl p-4 mb-4 border border-blue-200">
-            <p className="text-sm text-blue-800">
-              📊 Below are all screened resumes with their anomaly detection status and risk assessment.
+          <h2 className="text-2xl font-bold text-slate-900 mb-4">Resumes with Anomalies Detected</h2>
+          <div className="bg-red-50 rounded-xl p-4 mb-4 border border-red-200">
+            <p className="text-sm text-red-800">
+              ⚠️ Below are resumes where anomalies were detected during screening. Click any row to see full details.
             </p>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Candidate Name</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Email</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">ATS Score</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Anomaly Risk</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Status</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">Candidate Name</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">Email</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">ATS Score</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">Anomaly Risk</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">Anomalies Found</th>
+                <th className="px-4 py-4 text-left text-sm font-semibold text-slate-900">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {resumesWithAnomalies.map((resume) => {
-                const anomalyReport = anomalyReports.find(r => r.resume._id === resume._id);
+                const anomalyReport = anomalyReports.find(r => r.resume && r.resume._id === resume._id);
                 return (
                   <tr
                     key={resume._id}
@@ -1824,13 +2227,23 @@ const HRDashboardNew = () => {
                       setSelectedAnomalyReport(anomalyReport || null);
                     }}
                   >
-                    <td className="px-6 py-4 font-medium text-slate-900">
-                      {resume.parsedData?.name || "Unknown"}
+                    <td className="px-4 py-4 font-medium text-slate-900">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openResumeViewer(resume.originalFile, resume.parsedData?.name);
+                        }}
+                        className="text-left font-medium text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Click to view resume"
+                      >
+                        {resume.parsedData?.name || "Unknown"}
+                        <Eye size={14} className="text-blue-400" />
+                      </button>
                     </td>
-                    <td className="px-6 py-4 text-slate-600">
+                    <td className="px-4 py-4 text-slate-600">
                       {resume.parsedData?.email || "N/A"}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <span
                         className={`px-3 py-1 rounded-full text-sm font-semibold ${
                           resume.aiAnalysis.atsScore >= 80
@@ -1843,31 +2256,55 @@ const HRDashboardNew = () => {
                         {resume.aiAnalysis.atsScore}%
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       {anomalyReport ? (
                         <span
                           className={`px-3 py-1 rounded-full text-sm font-semibold ${
                             anomalyReport.riskScore > 50
                               ? "bg-red-100 text-red-700"
+                              : anomalyReport.riskScore > 25
+                              ? "bg-yellow-100 text-yellow-700"
                               : "bg-green-100 text-green-700"
                           }`}
                         >
-                          {anomalyReport.riskScore}% - {anomalyReport.riskLevel}
+                          {anomalyReport.riskScore}% - {anomalyReport.riskLevel || "Low"}
                         </span>
                       ) : (
-                        <span className="text-slate-400 text-sm">Not analyzed</span>
+                        <span className="px-3 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500">
+                          Not analyzed
+                        </span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
+                      {anomalyReport && anomalyReport.indicators.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {anomalyReport.indicators.slice(0, 3).map((indicator: string, idx: number) => (
+                            <span key={idx} className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium truncate max-w-[180px]" title={indicator}>
+                              {indicator.length > 30 ? indicator.slice(0, 30) + '…' : indicator}
+                            </span>
+                          ))}
+                          {anomalyReport.indicators.length > 3 && (
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-medium">
+                              +{anomalyReport.indicators.length - 3} more
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-sm">No anomalies</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
                       {anomalyReport ? (
                         <span
                           className={`px-3 py-1 rounded-full text-xs font-semibold ${
                             anomalyReport.status === "flagged"
                               ? "bg-red-100 text-red-700"
+                              : anomalyReport.status === "pending"
+                              ? "bg-amber-100 text-amber-700"
                               : "bg-green-100 text-green-700"
                           }`}
                         >
-                          {anomalyReport.status === "flagged" ? "⚠️ Flagged" : "✓ Cleared"}
+                          {anomalyReport.status === "flagged" ? "⚠️ Flagged" : anomalyReport.status === "pending" ? "⏳ Pending" : "✓ Cleared"}
                         </span>
                       ) : (
                         <span className="text-slate-400 text-sm">—</span>
@@ -1878,6 +2315,7 @@ const HRDashboardNew = () => {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -2491,8 +2929,6 @@ const HRDashboardNew = () => {
                           .map((resume: any, index: number) => {
                             const rank = index + 1;
                             const atsScore = resume.atsScore || 0;
-                            const matchScore = resume.matchScore || 0;
-                            const qualityScore = resume.qualityScore || 0;
                             const anomalyCount = resume.anomalyCount || 0;
                             const anomalySeverity = resume.anomalySeverity || 'none';
                             
@@ -3280,12 +3716,60 @@ const HRDashboardNew = () => {
           {activeSection === "dashboard" && renderDashboard()}
           {activeSection === "post-job" && renderPostJob()}
           {activeSection === "jobs" && renderJobs()}
+          {activeSection === "applications" && renderApplications()}
           {activeSection === "upload" && renderUpload()}
           {activeSection === "screening" && renderScreening()}
           {activeSection === "ranking" && renderRanking()}
           {activeSection === "anomalies" && renderAnomalies()}
         </main>
       </div>
+
+      {/* Resume Viewer Modal */}
+      {viewerFile && (
+        <div className="fixed inset-0 z-[9999] bg-black/75 flex flex-col">
+          <div className="bg-white flex items-center justify-between px-6 py-3 border-b border-slate-200 shadow">
+            <h2 className="font-bold text-lg text-slate-900 truncate max-w-[60%]">
+              {viewerTitle} — Resume
+            </h2>
+            <div className="flex items-center gap-3">
+              <a
+                href={`${API_URL}/api/view-file/${viewerFile}`}
+                download
+                className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all"
+              >
+                ⬇ Download
+              </a>
+              <button
+                onClick={() => setViewerFile(null)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-all"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 bg-slate-100 overflow-hidden">
+            {viewerFile.toLowerCase().endsWith(".pdf") ? (
+              <iframe
+                src={`${API_URL}/api/view-file/${viewerFile}`}
+                className="w-full h-full border-0"
+                title={viewerTitle}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full flex-col gap-4 text-slate-600">
+                <p>This file type cannot be previewed in the browser.</p>
+                <a
+                  href={`${API_URL}/api/view-file/${viewerFile}`}
+                  download
+                  className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all"
+                >
+                  ⬇ Download Resume
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

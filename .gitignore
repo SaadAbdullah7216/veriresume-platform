@@ -1,5 +1,44 @@
-frontend/node_modules
-backend/node_modules
+# Dependencies
+frontend/node_modules/
+backend/node_modules/
+
+# Environment files
+.env
 frontend/.env
 backend/.env
 python-service/.env
+*.env.local
+*.env.*.local
+
+# Build outputs
+frontend/dist/
+backend/dist/
+backend/build/
+
+# Python cache/venv
+python-service/__pycache__/
+python-service/**/*.pyc
+python-service/.pytest_cache/
+python-service/.mypy_cache/
+python-service/.venv/
+python-service/venv/
+
+# Runtime logs
+*.log
+frontend/*.log
+backend/*.log
+python-service/*.log
+py_log.txt
+backend_log.txt
+frontend_log.txt
+
+# Uploads/temp artifacts
+uploads/
+python-service/uploads/
+website-VeriResume/uploads/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

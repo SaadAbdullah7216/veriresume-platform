@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AdminLayout from "./AdminLayout";
-import { Settings, Save, Shield, Bell, Database, Globe } from "lucide-react";
+import { Save, Shield, Database, Globe } from "lucide-react";
 
 const AdminSettings = () => {
   const [settings, setSettings] = useState({
@@ -96,7 +96,6 @@ const AdminSettings = () => {
               { label: "Anomaly Detection", desc: "Automatically detect suspicious resume content", key: "enableAnomaly" as const },
               { label: "Email Notifications", desc: "Send email notifications for important events", key: "enableNotifications" as const },
               { label: "Auto-approve Users", desc: "Automatically approve new user registrations", key: "autoApproveUsers" as const },
-              { label: "Maintenance Mode", desc: "Put the site in maintenance mode (users can't access)", key: "maintenanceMode" as const },
             ].map((item) => (
               <div key={item.key} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
                 <div>

@@ -13,6 +13,7 @@ const ResumeSchema = new mongoose.Schema(
       experience: [mongoose.Schema.Types.Mixed],
       skills: [String],
       summary: String,
+      rawText: String,
     },
     aiAnalysis: {
       atsScore: Number,
@@ -20,8 +21,14 @@ const ResumeSchema = new mongoose.Schema(
       grammarScore: Number,
       readability: Number,
       structureScore: Number,
+      overallScore: Number,
       weaknesses: [String],
       suggestions: [String],
+      recommendedKeywords: [String],
+      techSkills: [String],
+      softSkills: [String],
+      matchedSkills: [String],
+      missingSkills: [String],
     },
     anomalyDetection: {
       hasAnomalies: { type: Boolean, default: false },
@@ -53,6 +60,7 @@ const ResumeSchema = new mongoose.Schema(
     decisionReason: { type: String },
     atsThresholdUsed: { type: Number }, // Threshold used for this decision
     lastScreeningDate: { type: Date },
+    lastScreeningJobId: { type: mongoose.Schema.Types.ObjectId, ref: 'Job' }, // Which job this ATS score was screened for
   },
   { timestamps: true }
 );

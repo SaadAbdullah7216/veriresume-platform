@@ -10,3 +10,7 @@ export { default as ProfileSettings } from './ProfileSettings';
 export { default as Reanalyze } from './Reanalyze';
 export { default as MyApplications } from './MyApplications';
 export { default as ExploreCompanies } from './ExploreCompanies';
+export { default as FindJobs } from './FindJobs';
+export { default as JobDetailsPage } from './JobDetailsPage';
+export { default as SavedJobs } from './SavedJobs';
+export { default as ResumeEnhancementFraud } from './ResumeEnhancementFraud';

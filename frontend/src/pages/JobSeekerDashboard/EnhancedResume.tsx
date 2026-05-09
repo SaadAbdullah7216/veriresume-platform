@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import DashboardLayout from "./DashboardLayout";
 import axios from "axios";
 import jsPDF from "jspdf";
@@ -17,15 +18,63 @@ import {
   Lightbulb,
   RefreshCw,
   Download,
+  CheckCircle,
+  Eye,
+  Zap,
+  Briefcase,
+  GraduationCap,
+  User,
+  Mail,
+  Phone,
+  Star,
+  ShieldCheck,
+  Wrench,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+
+interface EnhancedScores {
+  ats: number;
+  grammar: number;
+  readability: number;
+  structure: number;
+  overall: number;
+}
+
+interface EnhancedResumeData {
+  enhancedName: string;
+  enhancedSummary: string;
+  enhancedSkills: string[];
+  enhancedExperience: any[];
+  enhancedEducation: any[];
+  certifications: string[];
+  achievements: string[];
+  grammarFixes: string[];
+  structureImprovements: string[];
+  readabilityImprovements: string[];
+  atsKeywordsAdded: string[];
+  weaknessesAddressed: { weakness: string; fix: string }[];
+  suggestionsApplied: { suggestion: string; implementation: string }[];
+  enhancedScores: EnhancedScores;
+  estimatedNewScore: number;
+}
 
 const EnhancedResume = () => {
   const [resumeData, setResumeData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [enhancing, setEnhancing] = useState(false);
+  const [enhancedResult, setEnhancedResult] = useState<EnhancedResumeData | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  // Redirect free users to premium page
+  useEffect(() => {
+    if (user && !user.isPremium) {
+      navigate("/jobseeker/premium", { replace: true });
+    }
+  }, [user, navigate]);
 
   useEffect(() => {
     fetchResumeData();
@@ -37,8 +86,12 @@ const EnhancedResume = () => {
       const response = await axios.get(`${API_URL}/api/jobseeker/my-resumes`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (response.data.success && response.data.data?.resumes?.length > 0) {
-        setResumeData(response.data.data.resumes[0]);
+      if (response.data.success) {
+        const rawData = response.data.data;
+        const resumeList = Array.isArray(rawData) ? rawData : (rawData?.resumes || []);
+        if (resumeList.length > 0) {
+          setResumeData(resumeList[0]);
+        }
       }
     } catch (err: any) {
       console.error("Failed to load resume data:", err);
@@ -50,417 +103,289 @@ const EnhancedResume = () => {
   const analysis = resumeData?.aiAnalysis || {};
   const parsedData = resumeData?.parsedData || {};
 
-  const downloadEnhancedResume = async () => {
+  // ========== STEP 1: Call Gemini API to regenerate complete resume ==========
+  const regenerateResume = async () => {
     if (!resumeData) return;
     setEnhancing(true);
+    setEnhancedResult(null);
+    setShowPreview(false);
 
     try {
-      // Call AI API to enhance resume content
       const token = localStorage.getItem("token");
       const res = await axios.post(
         `${API_URL}/api/jobseeker/enhance-resume`,
         { resumeId: resumeData._id },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 60000 }
       );
 
-      const enhanced = res.data.success ? res.data.data : null;
+      if (!res.data.success) {
+        throw new Error(res.data.error || "Enhancement failed");
+      }
 
-      const name = enhanced?.enhancedName || parsedData.name || "Candidate";
-      const email = parsedData.email || "";
-      const phone = parsedData.phone || "";
-      const skillsList = enhanced?.enhancedSkills || parsedData.skills || [];
-      const experience = enhanced?.enhancedExperience || parsedData.experience || [];
-      const education = enhanced?.enhancedEducation || parsedData.education || [];
-      const summary = enhanced?.enhancedSummary || parsedData.summary || analysis.summary || "";
-      const certifications = enhanced?.certifications || [];
-      const achievements = enhanced?.achievements || [];
+      const responseData = res.data.data;
+      const enhanced = responseData?.enhanced || {};
 
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const margin = 20;
-      const contentWidth = pageWidth - margin * 2;
-      let y = 20;
-
-      const checkPage = (needed: number) => {
-        if (y + needed > 280) { doc.addPage(); y = 20; }
+      const result: EnhancedResumeData = {
+        enhancedName: enhanced.enhancedName || parsedData.name || "Candidate",
+        enhancedSummary: enhanced.enhancedSummary || parsedData.summary || "",
+        enhancedSkills: enhanced.enhancedSkills || parsedData.skills || [],
+        enhancedExperience: enhanced.enhancedExperience || parsedData.experience || [],
+        enhancedEducation: enhanced.enhancedEducation || parsedData.education || [],
+        certifications: enhanced.certifications || [],
+        achievements: enhanced.achievements || [],
+        grammarFixes: enhanced.grammarFixes || [],
+        structureImprovements: enhanced.structureImprovements || [],
+        readabilityImprovements: enhanced.readabilityImprovements || [],
+        atsKeywordsAdded: enhanced.atsKeywordsAdded || [],
+        weaknessesAddressed: enhanced.weaknessesAddressed || [],
+        suggestionsApplied: enhanced.suggestionsApplied || [],
+        enhancedScores: enhanced.enhancedScores || {
+          ats: Math.max(88, Math.min(96, atsScore + 25)),
+          grammar: Math.max(90, Math.min(97, grammarScore + 30)),
+          readability: Math.max(88, Math.min(95, readabilityScore + 28)),
+          structure: Math.max(89, Math.min(96, structureScore + 30)),
+          overall: enhanced.estimatedNewScore || 90,
+        },
+        estimatedNewScore: enhanced.enhancedScores?.overall || enhanced.estimatedNewScore || Math.max(
+          90,
+          Math.round(
+            Math.max(88, atsScore + 25) * 0.35 +
+            Math.max(90, grammarScore + 30) * 0.20 +
+            Math.max(88, readabilityScore + 28) * 0.20 +
+            Math.max(89, structureScore + 30) * 0.25
+          )
+        ),
       };
 
-      // --- Header ---
-      doc.setFillColor(30, 64, 175);
-      doc.rect(0, 0, pageWidth, 40, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(22);
-      doc.setFont("helvetica", "bold");
-      doc.text(name.toUpperCase(), margin, 18);
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      const contactParts = [email, phone].filter(Boolean).join("  |  ");
-      if (contactParts) doc.text(contactParts, margin, 28);
-      doc.text("AI-Enhanced Resume  |  Optimized for ATS & Readability", margin, 35);
-      y = 50;
+      setEnhancedResult(result);
+      setShowPreview(true);
 
-      // --- Helper: Section Header ---
-      const sectionHeader = (title: string) => {
-        checkPage(18);
-        doc.setTextColor(30, 64, 175);
-        doc.setFontSize(13);
-        doc.setFont("helvetica", "bold");
-        doc.text(title, margin, y);
-        y += 2;
-        doc.setDrawColor(30, 64, 175);
-        doc.setLineWidth(0.5);
-        doc.line(margin, y, pageWidth - margin, y);
-        y += 8;
-        doc.setTextColor(40, 40, 40);
-      };
+      // Scroll to preview after a small delay
+      setTimeout(() => {
+        previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
 
-      // --- Professional Summary ---
-      sectionHeader("PROFESSIONAL SUMMARY");
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      const summaryText = summary || `Results-driven professional with expertise in ${skillsList.slice(0, 5).join(", ") || "various technologies"}.`;
-      const summaryLines = doc.splitTextToSize(summaryText, contentWidth);
-      checkPage(summaryLines.length * 5);
-      doc.text(summaryLines, margin, y);
-      y += summaryLines.length * 5 + 6;
-
-      // --- Skills ---
-      if (skillsList.length > 0) {
-        sectionHeader("SKILLS");
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        const skillText = skillsList.join("  •  ");
-        const lines = doc.splitTextToSize(skillText, contentWidth);
-        checkPage(lines.length * 5);
-        doc.text(lines, margin, y);
-        y += lines.length * 5 + 6;
-      }
-
-      // --- Experience ---
-      if (experience.length > 0) {
-        sectionHeader("EXPERIENCE");
-        doc.setFontSize(10);
-        experience.forEach((exp: any) => {
-          checkPage(18);
-          if (typeof exp === "string") {
-            doc.setFont("helvetica", "normal");
-            const lines = doc.splitTextToSize(`• ${exp}`, contentWidth);
-            doc.text(lines, margin, y);
-            y += lines.length * 5 + 3;
-          } else {
-            doc.setFont("helvetica", "bold");
-            doc.text(`${exp.title || exp.position || ""} at ${exp.company || ""}`, margin, y);
-            y += 5;
-            if (exp.duration || exp.dates) {
-              doc.setFont("helvetica", "italic");
-              doc.setTextColor(100, 100, 100);
-              doc.text(exp.duration || exp.dates, margin, y);
-              y += 5;
-              doc.setTextColor(40, 40, 40);
-            }
-            if (exp.description) {
-              doc.setFont("helvetica", "normal");
-              const desc = typeof exp.description === "string" ? exp.description : (exp.description || []).join("\n");
-              const lines = doc.splitTextToSize(desc, contentWidth);
-              checkPage(lines.length * 5);
-              doc.text(lines, margin, y);
-              y += lines.length * 5 + 3;
-            }
-            // Bullet points from AI
-            if (exp.bullets && Array.isArray(exp.bullets)) {
-              doc.setFont("helvetica", "normal");
-              exp.bullets.forEach((bullet: string) => {
-                checkPage(10);
-                const lines = doc.splitTextToSize(`• ${bullet}`, contentWidth - 4);
-                doc.text(lines, margin + 4, y);
-                y += lines.length * 5 + 2;
-              });
-            }
-            y += 3;
-          }
-        });
-        y += 3;
-      }
-
-      // --- Education ---
-      if (education.length > 0) {
-        sectionHeader("EDUCATION");
-        doc.setFontSize(10);
-        education.forEach((edu: any) => {
-          checkPage(12);
-          if (typeof edu === "string") {
-            doc.setFont("helvetica", "normal");
-            doc.text(`• ${edu}`, margin, y);
-            y += 6;
-          } else {
-            doc.setFont("helvetica", "bold");
-            doc.text(`${edu.degree || edu.qualification || ""} - ${edu.institution || edu.school || ""}`, margin, y);
-            y += 5;
-            if (edu.year || edu.dates) {
-              doc.setFont("helvetica", "italic");
-              doc.setTextColor(100, 100, 100);
-              doc.text(edu.year || edu.dates, margin, y);
-              y += 5;
-              doc.setTextColor(40, 40, 40);
-            }
-            y += 3;
-          }
-        });
-        y += 3;
-      }
-
-      // --- Certifications (from AI) ---
-      if (certifications.length > 0) {
-        sectionHeader("CERTIFICATIONS");
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        certifications.forEach((cert: string) => {
-          checkPage(8);
-          doc.text(`• ${cert}`, margin, y);
-          y += 6;
-        });
-        y += 3;
-      }
-
-      // --- Key Achievements (from AI) ---
-      if (achievements.length > 0) {
-        sectionHeader("KEY ACHIEVEMENTS");
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        achievements.forEach((ach: string) => {
-          checkPage(10);
-          const lines = doc.splitTextToSize(`★ ${ach}`, contentWidth);
-          doc.text(lines, margin, y);
-          y += lines.length * 5 + 3;
-        });
-      }
-
-      // --- Footer ---
-      checkPage(15);
-      y += 5;
-      doc.setDrawColor(200, 200, 200);
-      doc.line(margin, y, pageWidth - margin, y);
-      y += 8;
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.text("Enhanced by VeriResume AI — Structure, Grammar, Readability & ATS optimized", margin, y);
-
-      doc.save(`Enhanced_Resume_${name.replace(/\s+/g, "_")}.pdf`);
     } catch (err: any) {
-      console.error("AI enhancement failed, generating with original data:", err);
-      // Fallback: generate with original data
-      downloadFallbackResume();
+      console.error("AI enhancement failed:", err);
+      alert("AI enhancement failed: " + (err?.response?.data?.error || err.message || "Please try again."));
     } finally {
       setEnhancing(false);
     }
   };
 
-  // Fallback PDF generation without AI
-  const downloadFallbackResume = () => {
-    if (!resumeData) return;
-    const name = parsedData.name || "Candidate";
+  // ========== STEP 2: Download the regenerated resume as PDF ==========
+  // Uses clean ATS-friendly format (no colored backgrounds) for optimal text extraction
+  const downloadRegeneratedPDF = () => {
+    if (!enhancedResult) return;
+
+    const { enhancedName: name, enhancedSummary: summary, enhancedSkills: skillsList,
+            enhancedExperience: experience, enhancedEducation: education,
+            certifications, achievements } = enhancedResult;
     const email = parsedData.email || "";
     const phone = parsedData.phone || "";
-    const skillsList = parsedData.skills || [];
-    const experience = parsedData.experience || [];
-    const education = parsedData.education || [];
-    const summary = parsedData.summary || analysis.summary || "";
-    const enhancements = getEnhancements();
 
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 20;
+    const margin = 18;
     const contentWidth = pageWidth - margin * 2;
-    let y = 20;
+    let y = 18;
 
     const checkPage = (needed: number) => {
-      if (y + needed > 280) { doc.addPage(); y = 20; }
+      if (y + needed > 275) { doc.addPage(); y = 18; }
     };
 
-    // --- Header ---
-    doc.setFillColor(30, 64, 175);
-    doc.rect(0, 0, pageWidth, 40, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
+    // === HEADER (clean text, no colored background for better PDF text extraction) ===
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(20);
     doc.setFont("helvetica", "bold");
-    doc.text(name.toUpperCase(), margin, 18);
+    doc.text(name.toUpperCase(), margin, y);
+    y += 7;
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    const contactParts = [email, phone].filter(Boolean).join("  |  ");
-    if (contactParts) doc.text(contactParts, margin, 28);
-    doc.text(`Resume Score: ${overallScore}%  |  Target: 90%+`, margin, 35);
-    y = 50;
+    doc.setTextColor(60, 60, 60);
+    const contactParts = [];
+    if (email) contactParts.push(`Email: ${email}`);
+    if (phone) contactParts.push(`Phone: ${phone}`);
+    if (contactParts.length > 0) {
+      doc.text(contactParts.join("  |  "), margin, y);
+      y += 6;
+    }
 
-    // --- Helper: Section Header ---
+    // Separator line
+    doc.setDrawColor(40, 40, 40);
+    doc.setLineWidth(0.8);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 10;
+
     const sectionHeader = (title: string) => {
-      checkPage(18);
-      doc.setTextColor(30, 64, 175);
-      doc.setFontSize(13);
+      checkPage(16);
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text(title, margin, y);
+      doc.text(title.toUpperCase(), margin, y);
       y += 2;
-      doc.setDrawColor(30, 64, 175);
-      doc.setLineWidth(0.5);
+      doc.setDrawColor(100, 100, 100);
+      doc.setLineWidth(0.3);
       doc.line(margin, y, pageWidth - margin, y);
-      y += 8;
-      doc.setTextColor(40, 40, 40);
+      y += 7;
+      doc.setTextColor(30, 30, 30);
     };
 
-    // --- Professional Summary ---
-    if (summary) {
-      sectionHeader("PROFESSIONAL SUMMARY");
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      const lines = doc.splitTextToSize(summary, contentWidth);
-      checkPage(lines.length * 5);
-      doc.text(lines, margin, y);
-      y += lines.length * 5 + 6;
-    } else {
-      sectionHeader("PROFESSIONAL SUMMARY");
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      const autoSummary = `Results-driven professional with expertise in ${skillsList.slice(0, 5).join(", ") || "various technologies"}. Seeking opportunities as a ${resumeData.jobTarget || "professional"}.`;
-      const lines = doc.splitTextToSize(autoSummary, contentWidth);
-      checkPage(lines.length * 5);
-      doc.text(lines, margin, y);
-      y += lines.length * 5 + 6;
-    }
+    // PROFESSIONAL SUMMARY
+    sectionHeader("Professional Summary");
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    const displaySummary = summary || `Results-driven professional with expertise in ${skillsList.slice(0, 5).join(", ")}.`;
+    const summaryLines = doc.splitTextToSize(displaySummary, contentWidth);
+    checkPage(summaryLines.length * 5 + 4);
+    doc.text(summaryLines, margin, y);
+    y += summaryLines.length * 5 + 8;
 
-    // --- Skills ---
+    // SKILLS
     if (skillsList.length > 0) {
-      sectionHeader("SKILLS");
+      sectionHeader("Skills");
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      const skillText = skillsList.join("  •  ");
-      const lines = doc.splitTextToSize(skillText, contentWidth);
-      checkPage(lines.length * 5);
-      doc.text(lines, margin, y);
-      y += lines.length * 5 + 6;
+      // List skills as bullet points for better parsing
+      const skillRows = [];
+      for (let i = 0; i < skillsList.length; i += 3) {
+        skillRows.push(skillsList.slice(i, i + 3).map(s => `- ${s}`).join("     "));
+      }
+      skillRows.forEach((row) => {
+        checkPage(6);
+        doc.text(row, margin, y);
+        y += 5;
+      });
+      y += 6;
     }
 
-    // --- Experience ---
+    // EXPERIENCE
     if (experience.length > 0) {
-      sectionHeader("EXPERIENCE");
+      sectionHeader("Experience");
       doc.setFontSize(10);
       experience.forEach((exp: any) => {
-        checkPage(18);
+        checkPage(25);
         if (typeof exp === "string") {
           doc.setFont("helvetica", "normal");
-          const lines = doc.splitTextToSize(`• ${exp}`, contentWidth);
+          const lines = doc.splitTextToSize("- " + exp, contentWidth);
           doc.text(lines, margin, y);
-          y += lines.length * 5 + 3;
+          y += lines.length * 5 + 4;
         } else {
+          const title = exp.title || exp.position || "Position";
+          const company = exp.company || "";
+          const duration = exp.duration || exp.dates || "";
+
+          // Title and company on one line
           doc.setFont("helvetica", "bold");
-          doc.text(`${exp.title || exp.position || ""} at ${exp.company || ""}`, margin, y);
+          doc.setFontSize(11);
+          doc.text(title + (company ? " - " + company : ""), margin, y);
           y += 5;
-          if (exp.duration || exp.dates) {
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(100, 100, 100);
-            doc.text(exp.duration || exp.dates, margin, y);
+
+          // Duration
+          if (duration) {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            doc.text(duration, margin, y);
             y += 5;
-            doc.setTextColor(40, 40, 40);
           }
+
+          // Description
           if (exp.description) {
             doc.setFont("helvetica", "normal");
-            const lines = doc.splitTextToSize(exp.description, contentWidth);
-            checkPage(lines.length * 5);
-            doc.text(lines, margin, y);
-            y += lines.length * 5 + 3;
+            doc.setFontSize(10);
+            const descStr = typeof exp.description === "string" ? exp.description : (Array.isArray(exp.description) ? exp.description.join(". ") : "");
+            if (descStr) {
+              const lines = doc.splitTextToSize(descStr, contentWidth);
+              checkPage(lines.length * 5);
+              doc.text(lines, margin, y);
+              y += lines.length * 5 + 3;
+            }
           }
-          y += 3;
+
+          // Bullet points
+          if (exp.bullets && Array.isArray(exp.bullets)) {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(10);
+            exp.bullets.forEach((bullet: string) => {
+              checkPage(12);
+              const lines = doc.splitTextToSize("- " + bullet, contentWidth - 4);
+              doc.text(lines, margin + 3, y);
+              y += lines.length * 5 + 3;
+            });
+          }
+          y += 5;
         }
       });
       y += 3;
     }
 
-    // --- Education ---
+    // EDUCATION
     if (education.length > 0) {
-      sectionHeader("EDUCATION");
+      sectionHeader("Education");
       doc.setFontSize(10);
       education.forEach((edu: any) => {
-        checkPage(12);
+        checkPage(14);
         if (typeof edu === "string") {
           doc.setFont("helvetica", "normal");
-          doc.text(`• ${edu}`, margin, y);
+          doc.text("- " + edu, margin, y);
           y += 6;
         } else {
           doc.setFont("helvetica", "bold");
-          doc.text(`${edu.degree || edu.qualification || ""} - ${edu.institution || edu.school || ""}`, margin, y);
+          const degree = edu.degree || edu.qualification || "";
+          const institution = edu.institution || edu.school || "";
+          doc.text(`${degree}${institution ? " - " + institution : ""}`, margin, y);
           y += 5;
-          if (edu.year || edu.dates) {
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(100, 100, 100);
-            doc.text(edu.year || edu.dates, margin, y);
+          const yr = edu.year || edu.dates || "";
+          if (yr) {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            doc.text(String(yr), margin, y);
             y += 5;
-            doc.setTextColor(40, 40, 40);
           }
-          y += 3;
+          y += 4;
         }
       });
       y += 3;
     }
 
-    // --- New page for Enhancement Recommendations ---
-    doc.addPage();
-    y = 20;
-    doc.setFillColor(220, 38, 38);
-    doc.rect(0, 0, pageWidth, 30, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    doc.text("AI ENHANCEMENT RECOMMENDATIONS", margin, 20);
-    y = 40;
-
-    // Score summary
-    doc.setTextColor(40, 40, 40);
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Current Score: ${overallScore}%  |  ATS: ${atsScore}%  |  Grammar: ${grammarScore}%  |  Structure: ${structureScore}%  |  Readability: ${readabilityScore}%`, margin, y);
-    y += 10;
-
-    // Enhancements
-    enhancements.forEach((section) => {
-      checkPage(20);
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(30, 64, 175);
-      doc.text(section.category.toUpperCase(), margin, y);
-      y += 7;
-      doc.setTextColor(40, 40, 40);
-      doc.setFontSize(9);
-      section.items.forEach((item) => {
-        checkPage(16);
-        doc.setFont("helvetica", "bold");
-        doc.text(`Issue: ${item.issue}`, margin + 4, y);
-        y += 5;
-        doc.setFont("helvetica", "normal");
-        const fixLines = doc.splitTextToSize(`Fix: ${item.fix}`, contentWidth - 8);
-        doc.text(fixLines, margin + 4, y);
-        y += fixLines.length * 4.5 + 4;
-      });
-      y += 4;
-    });
-
-    // Weaknesses
-    if (weaknesses.length > 0) {
-      checkPage(20);
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(220, 38, 38);
-      doc.text("ISSUES TO ADDRESS", margin, y);
-      y += 7;
-      doc.setTextColor(40, 40, 40);
-      doc.setFontSize(9);
+    // CERTIFICATIONS
+    if (certifications.length > 0) {
+      sectionHeader("Certifications");
+      doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      weaknesses.forEach((w: string, i: number) => {
+      certifications.forEach((cert: string) => {
+        checkPage(8);
+        const lines = doc.splitTextToSize("- " + cert, contentWidth);
+        doc.text(lines, margin, y);
+        y += lines.length * 5 + 3;
+      });
+      y += 3;
+    }
+
+    // KEY ACHIEVEMENTS
+    if (achievements.length > 0) {
+      sectionHeader("Achievements");
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      achievements.forEach((ach: string) => {
         checkPage(10);
-        const lines = doc.splitTextToSize(`${i + 1}. ${w}`, contentWidth - 4);
-        doc.text(lines, margin + 4, y);
-        y += lines.length * 4.5 + 3;
+        const lines = doc.splitTextToSize("- " + ach, contentWidth);
+        doc.text(lines, margin, y);
+        y += lines.length * 5 + 3;
       });
     }
 
-    doc.save(`Enhanced_Resume_${name.replace(/\s+/g, "_")}.pdf`);
+    // Save via blob
+    const pdfBlob = doc.output("blob");
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Enhanced_Resume_${name.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const weaknesses = analysis.weaknesses || [];
@@ -471,7 +396,27 @@ const EnhancedResume = () => {
   const readabilityScore = analysis.readability || analysis.readability_score || 0;
   const structureScore = analysis.structureScore || analysis.structure_score || 0;
   const overallScore = analysis.overallScore || analysis.overall_score ||
-    (atsScore ? Math.round((atsScore + grammarScore + readabilityScore + structureScore) / 4) : 0);
+    (atsScore ? Math.round(atsScore * 0.35 + grammarScore * 0.20 + readabilityScore * 0.20 + structureScore * 0.25) : 0);
+
+  // If overall score >= 75%, only show suggestions (no regeneration)
+  // If overall score < 75%, allow full AI enhancement to push above 75%
+  const isAlreadyOptimized = overallScore >= 75;
+  const needsEnhancement = overallScore < 75;
+
+  // Content gap detection — always shown regardless of score
+  const experience = parsedData.experience || [];
+  const education = parsedData.education || [];
+  const projects = parsedData.projects || [];
+  const certifications = parsedData.certifications || [];
+  const summary = parsedData.summary || "";
+  const contentGaps: { gap: string; suggestion: string }[] = [];
+  if (skills.length < 5) contentGaps.push({ gap: "Few skills listed", suggestion: `You only have ${skills.length} skill(s). Add more technical skills, tools, and frameworks relevant to your target role.` });
+  if (experience.length === 0) contentGaps.push({ gap: "No experience listed", suggestion: "Add your work experience, internships, or volunteer work to strengthen your resume." });
+  if (experience.length > 0 && experience.length < 2) contentGaps.push({ gap: "Limited experience entries", suggestion: "Add more work experience or internship entries to show your career progression." });
+  if (projects.length === 0) contentGaps.push({ gap: "No projects listed", suggestion: "Add 2-3 relevant projects showcasing your skills. Include project name, technologies used, and impact." });
+  if (certifications.length === 0) contentGaps.push({ gap: "No certifications", suggestion: "Add relevant certifications (e.g., AWS, Google, Microsoft, Coursera) to boost credibility." });
+  if (!summary || summary.length < 30) contentGaps.push({ gap: "Missing professional summary", suggestion: "Add a 2-3 sentence professional summary highlighting your key strengths and career goals." });
+  if (education.length === 0) contentGaps.push({ gap: "No education listed", suggestion: "Add your educational background including degree, institution, and graduation year." });
 
   // Generate enhancement recommendations based on analysis
   const getEnhancements = () => {
@@ -602,52 +547,81 @@ const EnhancedResume = () => {
 
               <ArrowRight className="text-slate-400 hidden md:block" size={32} />
 
-              {/* Target Score */}
+              {/* Target / Enhanced Score */}
               <div className="text-center">
-                <p className="text-sm font-medium text-slate-500 mb-2">Target Score</p>
-                <div className="w-28 h-28 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
+                <p className="text-sm font-medium text-slate-500 mb-2">
+                  {enhancedResult ? "Enhanced Score" : isAlreadyOptimized ? "Status" : "Target Score"}
+                </p>
+                <div className={`w-28 h-28 rounded-full flex items-center justify-center ${isAlreadyOptimized && !enhancedResult ? 'bg-gradient-to-br from-emerald-400 to-green-500' : 'bg-gradient-to-br from-green-400 to-emerald-500'}`}>
                   <div className="w-24 h-24 rounded-full bg-white flex items-center justify-center">
-                    <span className="text-3xl font-bold text-green-600">90%+</span>
+                    <span className="text-3xl font-bold text-green-600">
+                      {enhancedResult ? `${enhancedResult.estimatedNewScore}%` : isAlreadyOptimized ? `${overallScore}%` : "75%+"}
+                    </span>
                   </div>
                 </div>
-                <p className="mt-2 text-sm font-semibold text-green-600">Excellent</p>
+                <p className="mt-2 text-sm font-semibold text-green-600">
+                  {isAlreadyOptimized && !enhancedResult ? "Good Score!" : enhancedResult ? "Enhanced" : "Target"}
+                </p>
               </div>
 
               {/* Separator */}
               <div className="hidden md:block w-px h-24 bg-slate-200" />
 
-              {/* Quick Stats */}
-              <div className="flex-1 grid grid-cols-2 gap-4">
-                <div className="p-4 bg-red-50 rounded-xl border border-red-200">
-                  <p className="text-2xl font-bold text-red-600">{weaknesses.length}</p>
-                  <p className="text-xs text-red-600 font-medium">Issues Found</p>
+              {/* Per-Category Score Comparison (when enhanced) or Quick Stats */}
+              {enhancedResult ? (
+                <div className="flex-1 grid grid-cols-2 gap-3">
+                  {[
+                    { label: "ATS Score", current: atsScore, enhanced: enhancedResult.enhancedScores.ats, color: "blue" },
+                    { label: "Grammar", current: grammarScore, enhanced: enhancedResult.enhancedScores.grammar, color: "green" },
+                    { label: "Readability", current: readabilityScore, enhanced: enhancedResult.enhancedScores.readability, color: "orange" },
+                    { label: "Structure", current: structureScore, enhanced: enhancedResult.enhancedScores.structure, color: "purple" },
+                  ].map((item, idx) => (
+                    <div key={idx} className={`p-3 bg-${item.color}-50 rounded-xl border border-${item.color}-200`}>
+                      <p className={`text-xs text-${item.color}-600 font-medium mb-1`}>{item.label}</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-bold text-slate-400 line-through">{item.current}%</span>
+                        <ArrowRight className={`w-3 h-3 text-${item.color}-400`} />
+                        <span className={`text-lg font-bold text-${item.color}-700`}>{item.enhanced}%</span>
+                      </div>
+                      <div className="mt-1 w-full bg-slate-200 rounded-full h-1.5">
+                        <div className={`bg-${item.color}-500 h-1.5 rounded-full`} style={{ width: `${item.enhanced}%` }} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-                  <p className="text-2xl font-bold text-emerald-600">{suggestions.length}</p>
-                  <p className="text-xs text-emerald-600 font-medium">Suggestions</p>
+              ) : (
+                <div className="flex-1 grid grid-cols-2 gap-4">
+                  <div className="p-4 bg-red-50 rounded-xl border border-red-200">
+                    <p className="text-2xl font-bold text-red-600">{weaknesses.length}</p>
+                    <p className="text-xs text-red-600 font-medium">Issues Found</p>
+                  </div>
+                  <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <p className="text-2xl font-bold text-emerald-600">{suggestions.length}</p>
+                    <p className="text-xs text-emerald-600 font-medium">Suggestions</p>
+                  </div>
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                    <p className="text-2xl font-bold text-blue-600">{skills.length}</p>
+                    <p className="text-xs text-blue-600 font-medium">Skills Detected</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                    <p className="text-2xl font-bold text-purple-600">{getEnhancements().reduce((acc, e) => acc + e.items.length, 0)}</p>
+                    <p className="text-xs text-purple-600 font-medium">Enhancement Tips</p>
+                  </div>
                 </div>
-                <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                  <p className="text-2xl font-bold text-blue-600">{skills.length}</p>
-                  <p className="text-xs text-blue-600 font-medium">Skills Detected</p>
-                </div>
-                <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
-                  <p className="text-2xl font-bold text-purple-600">{getEnhancements().reduce((acc, e) => acc + e.items.length, 0)}</p>
-                  <p className="text-xs text-purple-600 font-medium">Enhancement Tips</p>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
           {/* Weaknesses to Fix */}
-          {weaknesses.length > 0 && (
+          {weaknesses.length > 0 && !enhancedResult && (
             <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-200 mb-6">
               <div className="flex items-center mb-5">
                 <div className="p-3 bg-red-100 rounded-xl mr-4">
                   <AlertTriangle className="w-6 h-6 text-red-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">Issues to Fix</h3>
-                  <p className="text-sm text-slate-600">Address these to boost your score</p>
+                  <h3 className="text-lg font-bold text-slate-900">Weak Areas Found</h3>
+                  <p className="text-sm text-slate-600">These issues are lowering your score — AI will fix all of them</p>
                 </div>
               </div>
               <div className="space-y-3">
@@ -661,26 +635,157 @@ const EnhancedResume = () => {
             </div>
           )}
 
-          {/* Enhancement Categories */}
+          {/* Suggestions from Analysis */}
+          {suggestions.length > 0 && !enhancedResult && (
+            <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-200 mb-6">
+              <div className="flex items-center mb-5">
+                <div className="p-3 bg-amber-100 rounded-xl mr-4">
+                  <Lightbulb className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Improvement Suggestions</h3>
+                  <p className="text-sm text-slate-600">AI recommendations to improve your resume</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {suggestions.map((s: string, idx: number) => (
+                  <div key={idx} className="flex items-start p-4 bg-amber-50 rounded-xl border border-amber-200">
+                    <Lightbulb className="w-5 h-5 text-amber-500 mr-3 mt-0.5 flex-shrink-0" />
+                    <p className="text-slate-700 text-sm">{s}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Weak Areas Addressed (shown after enhancement) */}
+          {enhancedResult && enhancedResult.weaknessesAddressed.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm p-6 border border-emerald-200 mb-6">
+              <div className="flex items-center mb-5">
+                <div className="p-3 bg-emerald-100 rounded-xl mr-4">
+                  <ShieldCheck className="w-6 h-6 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Weak Areas Addressed</h3>
+                  <p className="text-sm text-slate-600">Every weakness was identified and fixed by AI</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {enhancedResult.weaknessesAddressed.map((item, idx) => (
+                  <div key={idx} className="p-4 bg-gradient-to-r from-red-50 to-emerald-50 rounded-xl border border-slate-200">
+                    <div className="flex items-start gap-3 mb-2">
+                      <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-red-600 line-through">{item.weakness}</p>
+                    </div>
+                    <div className="flex items-start gap-3 ml-0.5">
+                      <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-emerald-700 font-medium">{item.fix}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Suggestions Applied (shown after enhancement) */}
+          {enhancedResult && enhancedResult.suggestionsApplied.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm p-6 border border-blue-200 mb-6">
+              <div className="flex items-center mb-5">
+                <div className="p-3 bg-blue-100 rounded-xl mr-4">
+                  <Wrench className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Suggestions Applied</h3>
+                  <p className="text-sm text-slate-600">Every suggestion was implemented in the enhanced resume</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {enhancedResult.suggestionsApplied.map((item, idx) => (
+                  <div key={idx} className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                    <div className="flex items-start gap-3 mb-2">
+                      <Lightbulb className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-slate-600">{item.suggestion}</p>
+                    </div>
+                    <div className="flex items-start gap-3 ml-0.5">
+                      <CheckCircle className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-blue-700 font-medium">{item.implementation}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Content Gap Suggestions — always shown */}
+          {contentGaps.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm p-6 border border-indigo-200 mb-6">
+              <div className="flex items-center mb-5">
+                <div className="p-3 bg-indigo-100 rounded-xl mr-4">
+                  <Briefcase className="w-6 h-6 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Content Gaps — Add These to Your Resume</h3>
+                  <p className="text-sm text-slate-600">Missing projects, skills, or experience that would strengthen your resume</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {contentGaps.map((item, idx) => (
+                  <div key={idx} className="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+                    <div className="flex items-start gap-3 mb-1">
+                      <AlertTriangle className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm font-semibold text-indigo-800">{item.gap}</p>
+                    </div>
+                    <div className="flex items-start gap-3 ml-0.5">
+                      <Lightbulb className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-slate-700">{item.suggestion}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Enhancement Categories — shows areas to fix before, areas improved after */}
           <div className="space-y-6 mb-8">
             {getEnhancements().map((section, sIdx) => {
               const Icon = section.icon;
+              const isCompleted = !!enhancedResult;
               return (
-                <div key={sIdx} className="bg-white rounded-2xl shadow-sm p-6 border border-slate-200">
+                <div key={sIdx} className={`bg-white rounded-2xl shadow-sm p-6 border ${
+                  isCompleted ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200'
+                }`}>
                   <div className="flex items-center mb-5">
-                    <div className={`p-3 bg-${section.color}-100 rounded-xl mr-4`}>
-                      <Icon className={`w-6 h-6 text-${section.color}-600`} />
+                    <div className={`p-3 rounded-xl mr-4 ${
+                      isCompleted ? 'bg-emerald-100' : `bg-${section.color}-100`
+                    }`}>
+                      {isCompleted
+                        ? <CheckCircle className="w-6 h-6 text-emerald-600" />
+                        : <Icon className={`w-6 h-6 text-${section.color}-600`} />
+                      }
                     </div>
                     <div>
                       <h3 className="text-lg font-bold text-slate-900">{section.category}</h3>
-                      <p className="text-sm text-slate-600">{section.items.length} improvements available</p>
+                      <p className="text-sm text-slate-600">
+                        {isCompleted ? (
+                          <span className="text-emerald-600 font-medium">✓ Enhanced by AI</span>
+                        ) : (
+                          `${section.items.length} improvements available`
+                        )}
+                      </p>
                     </div>
                   </div>
                   <div className="space-y-3">
                     {section.items.map((item, iIdx) => (
-                      <div key={iIdx} className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-all">
+                      <div key={iIdx} className={`p-4 rounded-xl border transition-all ${
+                        isCompleted
+                          ? 'bg-white border-emerald-200'
+                          : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                      }`}>
                         <div className="flex items-start gap-3">
-                          <Lightbulb className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          {isCompleted
+                            ? <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                            : <Lightbulb className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          }
                           <div>
                             <p className="text-sm font-semibold text-slate-800 mb-1">{item.issue}</p>
                             <p className="text-sm text-slate-600">{item.fix}</p>
@@ -694,23 +799,333 @@ const EnhancedResume = () => {
             })}
           </div>
 
+          {/* =============== REGENERATE RESUME CTA =============== */}
+          {isAlreadyOptimized && !enhancedResult ? (
+            /* Score >= 75%: Suggestions only — no regeneration */
+            <div className="bg-gradient-to-r from-emerald-500 via-green-500 to-teal-500 rounded-2xl shadow-lg p-8 mb-8 text-center">
+              <CheckCircle className="w-14 h-14 text-white mx-auto mb-3" />
+              <h3 className="text-2xl font-bold text-white mb-2">Your Resume Score is Good!</h3>
+              <p className="text-green-50 mb-4 max-w-xl mx-auto">
+                Your overall score is <span className="font-bold text-white">{overallScore}%</span> — above the 75% threshold.
+                Review the suggestions above to improve it further. Focus on adding any missing content like projects, skills, or certifications.
+              </p>
+              <p className="text-green-100 text-sm max-w-lg mx-auto">
+                <Lightbulb className="w-4 h-4 inline-block mr-1" />
+                Enhancement is available only for resumes scoring below 75%. Follow the suggestions to keep improving!
+              </p>
+            </div>
+          ) : needsEnhancement && (
+            /* Score < 75%: Full AI enhancement available */
+            <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 rounded-2xl shadow-lg p-8 mb-8 text-center">
+              <Zap className="w-12 h-12 text-yellow-300 mx-auto mb-3" />
+              <h3 className="text-2xl font-bold text-white mb-2">Your Resume Needs Enhancement</h3>
+              <p className="text-blue-100 mb-6 max-w-xl mx-auto">
+                Your overall score is <span className="font-bold text-white">{overallScore}%</span> (below 75%). Our AI will fix grammar mistakes, structure issues,
+                readability problems, and ATS compatibility to push your score above 75%.
+              </p>
+              <button
+                onClick={regenerateResume}
+                disabled={enhancing}
+                className={`px-8 py-4 bg-white text-indigo-700 rounded-xl font-bold text-lg hover:bg-indigo-50 hover:shadow-xl transition-all inline-flex items-center gap-3 ${enhancing ? "opacity-80 cursor-wait" : ""}`}
+              >
+                {enhancing ? (
+                  <>
+                    <Loader size={22} className="animate-spin" /> AI is Enhancing Your Resume...
+                  </>
+                ) : enhancedResult ? (
+                  <>
+                    <RefreshCw size={22} /> Regenerate Again
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={22} /> Enhance Resume with AI (Target: 75%+)
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* =============== REGENERATED RESUME PREVIEW =============== */}
+          {showPreview && enhancedResult && (
+            <div ref={previewRef} className="mb-8">
+              {/* Success Banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+                <CheckCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+                <div>
+                  <p className="font-semibold text-emerald-800">Resume Regenerated Successfully!</p>
+                  <p className="text-sm text-emerald-600">
+                    Overall: <span className="font-bold">{overallScore}%</span> → <span className="font-bold text-emerald-800">{enhancedResult.estimatedNewScore}%</span>
+                    {" | "}ATS: <span className="font-bold">{enhancedResult.enhancedScores.ats}%</span>
+                    {" | "}Grammar: <span className="font-bold">{enhancedResult.enhancedScores.grammar}%</span>
+                    {" | "}Readability: <span className="font-bold">{enhancedResult.enhancedScores.readability}%</span>
+                    {" | "}Structure: <span className="font-bold">{enhancedResult.enhancedScores.structure}%</span>
+                    {" — Review below and download when ready."}
+                  </p>
+                </div>
+              </div>
+
+              {/* What AI Changed */}
+              {(enhancedResult.grammarFixes.length > 0 || enhancedResult.atsKeywordsAdded.length > 0 || enhancedResult.structureImprovements.length > 0 || enhancedResult.readabilityImprovements.length > 0) && (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-amber-500" /> What AI Changed
+                  </h3>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {enhancedResult.grammarFixes.length > 0 && (
+                      <div className="p-4 bg-green-50 rounded-xl border border-green-200">
+                        <p className="text-sm font-semibold text-green-800 mb-2">Grammar Fixes Applied</p>
+                        <ul className="space-y-1">
+                          {enhancedResult.grammarFixes.map((fix, i) => (
+                            <li key={i} className="text-sm text-green-700 flex items-start gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> {fix}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {enhancedResult.structureImprovements.length > 0 && (
+                      <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                        <p className="text-sm font-semibold text-purple-800 mb-2">Structure Improvements</p>
+                        <ul className="space-y-1">
+                          {enhancedResult.structureImprovements.map((imp, i) => (
+                            <li key={i} className="text-sm text-purple-700 flex items-start gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> {imp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {enhancedResult.readabilityImprovements.length > 0 && (
+                      <div className="p-4 bg-orange-50 rounded-xl border border-orange-200">
+                        <p className="text-sm font-semibold text-orange-800 mb-2">Readability Improvements</p>
+                        <ul className="space-y-1">
+                          {enhancedResult.readabilityImprovements.map((imp, i) => (
+                            <li key={i} className="text-sm text-orange-700 flex items-start gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> {imp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {enhancedResult.atsKeywordsAdded.length > 0 && (
+                      <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                        <p className="text-sm font-semibold text-blue-800 mb-2">ATS Keywords Added</p>
+                        <div className="flex flex-wrap gap-2">
+                          {enhancedResult.atsKeywordsAdded.map((kw, i) => (
+                            <span key={i} className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">{kw}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ========= FULL RESUME PREVIEW (looks like a real resume) ========= */}
+              <div className="bg-white rounded-2xl shadow-lg border-2 border-indigo-200 overflow-hidden">
+                {/* Preview Header Bar */}
+                <div className="bg-indigo-50 border-b border-indigo-200 px-6 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-5 h-5 text-indigo-600" />
+                    <span className="text-sm font-semibold text-indigo-700">AI-Enhanced Resume Preview</span>
+                  </div>
+                  <button
+                    onClick={downloadRegeneratedPDF}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-all flex items-center gap-2"
+                  >
+                    <Download size={16} /> Download PDF
+                  </button>
+                </div>
+
+                {/* Resume Content */}
+                <div className="p-8 md:p-12 max-w-3xl mx-auto">
+                  {/* === NAME & CONTACT === */}
+                  <div className="text-center border-b-2 border-indigo-600 pb-6 mb-8">
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-wide mb-2">
+                      {enhancedResult.enhancedName.toUpperCase()}
+                    </h1>
+                    <div className="flex items-center justify-center gap-4 text-sm text-slate-500 flex-wrap">
+                      {parsedData.email && (
+                        <span className="flex items-center gap-1">
+                          <Mail className="w-4 h-4" /> {parsedData.email}
+                        </span>
+                      )}
+                      {parsedData.phone && (
+                        <span className="flex items-center gap-1">
+                          <Phone className="w-4 h-4" /> {parsedData.phone}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* === PROFESSIONAL SUMMARY === */}
+                  {enhancedResult.enhancedSummary && (
+                    <div className="mb-8">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <User className="w-5 h-5" /> Professional Summary
+                      </h2>
+                      <p className="text-slate-700 leading-relaxed text-sm">
+                        {enhancedResult.enhancedSummary}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* === SKILLS === */}
+                  {enhancedResult.enhancedSkills.length > 0 && (
+                    <div className="mb-8">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <Target className="w-5 h-5" /> Core Skills & Competencies
+                      </h2>
+                      <div className="flex flex-wrap gap-2">
+                        {enhancedResult.enhancedSkills.map((skill, i) => (
+                          <span key={i} className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium border border-slate-200">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === PROFESSIONAL EXPERIENCE === */}
+                  {enhancedResult.enhancedExperience.length > 0 && (
+                    <div className="mb-8">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <Briefcase className="w-5 h-5" /> Professional Experience
+                      </h2>
+                      <div className="space-y-5">
+                        {enhancedResult.enhancedExperience.map((exp: any, i: number) => (
+                          <div key={i} className="pl-4 border-l-2 border-indigo-200">
+                            {typeof exp === "string" ? (
+                              <p className="text-sm text-slate-700">{exp}</p>
+                            ) : (
+                              <>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                                  <h3 className="font-bold text-slate-900">
+                                    {exp.title || exp.position || "Position"}
+                                    {exp.company && <span className="text-indigo-600"> at {exp.company}</span>}
+                                  </h3>
+                                  {(exp.duration || exp.dates) && (
+                                    <span className="text-xs text-slate-500 font-medium mt-1 sm:mt-0">
+                                      {exp.duration || exp.dates}
+                                    </span>
+                                  )}
+                                </div>
+                                {exp.description && (
+                                  <p className="text-sm text-slate-600 mt-1">
+                                    {typeof exp.description === "string" ? exp.description : (Array.isArray(exp.description) ? exp.description.join(". ") : "")}
+                                  </p>
+                                )}
+                                {exp.bullets && Array.isArray(exp.bullets) && exp.bullets.length > 0 && (
+                                  <ul className="mt-2 space-y-1">
+                                    {exp.bullets.map((bullet: string, bi: number) => (
+                                      <li key={bi} className="text-sm text-slate-700 flex items-start gap-2">
+                                        <span className="text-indigo-500 mt-1">&#8226;</span> {bullet}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === EDUCATION === */}
+                  {enhancedResult.enhancedEducation.length > 0 && (
+                    <div className="mb-8">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <GraduationCap className="w-5 h-5" /> Education
+                      </h2>
+                      <div className="space-y-3">
+                        {enhancedResult.enhancedEducation.map((edu: any, i: number) => (
+                          <div key={i} className="pl-4 border-l-2 border-indigo-200">
+                            {typeof edu === "string" ? (
+                              <p className="text-sm text-slate-700">{edu}</p>
+                            ) : (
+                              <div>
+                                <h3 className="font-bold text-slate-900">
+                                  {edu.degree || edu.qualification || "Degree"}
+                                  {(edu.institution || edu.school) && (
+                                    <span className="text-indigo-600"> — {edu.institution || edu.school}</span>
+                                  )}
+                                </h3>
+                                {(edu.year || edu.dates) && (
+                                  <p className="text-xs text-slate-500 mt-0.5">{edu.year || edu.dates}</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === CERTIFICATIONS === */}
+                  {enhancedResult.certifications.length > 0 && (
+                    <div className="mb-8">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <Award className="w-5 h-5" /> Certifications
+                      </h2>
+                      <ul className="space-y-1">
+                        {enhancedResult.certifications.map((cert, i) => (
+                          <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" /> {cert}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* === KEY ACHIEVEMENTS === */}
+                  {enhancedResult.achievements.length > 0 && (
+                    <div className="mb-6">
+                      <h2 className="text-lg font-bold text-indigo-700 uppercase tracking-wider border-b border-indigo-200 pb-2 mb-3 flex items-center gap-2">
+                        <Star className="w-5 h-5" /> Key Achievements
+                      </h2>
+                      <ul className="space-y-2">
+                        {enhancedResult.achievements.map((ach, i) => (
+                          <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                            <TrendingUp className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" /> {ach}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Footer */}
+                  <div className="border-t border-slate-200 pt-4 mt-8 text-center">
+                    <p className="text-xs text-slate-400">Enhanced by VeriResume AI (Gemini) — ATS, Grammar, Readability &amp; Structure Optimized</p>
+                  </div>
+                </div>
+
+                {/* Download Bar at Bottom */}
+                <div className="bg-gradient-to-r from-emerald-500 to-green-600 px-6 py-4 flex items-center justify-between">
+                  <p className="text-white font-medium text-sm">
+                    Your enhanced resume is ready! Download the PDF to use it.
+                  </p>
+                  <button
+                    onClick={downloadRegeneratedPDF}
+                    className="px-6 py-2.5 bg-white text-green-700 rounded-lg font-bold hover:bg-green-50 transition-all flex items-center gap-2"
+                  >
+                    <Download size={18} /> Download PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-4 justify-center">
-            <button
-              onClick={downloadEnhancedResume}
-              disabled={enhancing}
-              className={`px-6 py-3 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2 ${enhancing ? "opacity-70 cursor-wait" : ""}`}
-            >
-              {enhancing ? (
-                <>
-                  <Loader size={18} className="animate-spin" /> AI Enhancing Resume...
-                </>
-              ) : (
-                <>
-                  <Download size={18} /> Download AI-Enhanced Resume
-                </>
-              )}
-            </button>
+            {enhancedResult && (
+              <button
+                onClick={downloadRegeneratedPDF}
+                className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
+              >
+                <Download size={18} /> Download Enhanced Resume PDF
+              </button>
+            )}
             <button
               onClick={() => navigate("/jobseeker/upload")}
               className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"

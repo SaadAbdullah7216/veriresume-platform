@@ -4,7 +4,6 @@ import DashboardLayout from "./DashboardLayout";
 import axios from "axios";
 import {
   FileText,
-  Briefcase,
   MapPin,
   Clock,
   CheckCircle,
@@ -43,6 +42,13 @@ interface Application {
     name: string;
     email: string;
     company?: string;
+  };
+  resume?: {
+    _id: string;
+    originalFileName?: string;
+    parsedData?: { name?: string; skills?: string[] };
+    aiAnalysis?: { atsScore?: number; overallScore?: number };
+    createdAt?: string;
   };
   status: string;
   matchScore: number;
@@ -275,6 +281,33 @@ const MyApplications = () => {
                               <span className="text-slate-400">HR: {app.hr.name}</span>
                             )}
                           </div>
+
+                          {/* Resume Info */}
+                          {app.resume && (
+                            <div className="mt-3 flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
+                              <FileText size={14} className="text-cyan-600 flex-shrink-0" />
+                              <div className="flex items-center gap-3 text-xs text-slate-600 flex-wrap">
+                                <span className="font-semibold text-slate-700">
+                                  {app.resume.originalFileName || app.resume.parsedData?.name || "Resume"}
+                                </span>
+                                {app.resume.aiAnalysis?.atsScore && (
+                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full border border-blue-200 font-semibold">
+                                    ATS: {app.resume.aiAnalysis.atsScore}%
+                                  </span>
+                                )}
+                                {app.resume.parsedData?.skills && app.resume.parsedData.skills.length > 0 && (
+                                  <span className="text-slate-400">
+                                    {app.resume.parsedData.skills.length} skills
+                                  </span>
+                                )}
+                                {app.resume.createdAt && (
+                                  <span className="text-slate-400">
+                                    Uploaded: {formatDate(app.resume.createdAt)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
 
                           {/* Interview Scheduled Info */}
                           {app.status === "interview_scheduled" && (

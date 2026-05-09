@@ -26,6 +26,7 @@ const UserSchema = new mongoose.Schema(
     // Premium / Subscription info
     isPremium: { type: Boolean, default: false },
     premiumExpiresAt: { type: Date },
+    stripeCustomerId: { type: String },
   },
   { timestamps: true }
 );

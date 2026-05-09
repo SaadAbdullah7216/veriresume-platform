@@ -19,6 +19,7 @@ import {
   MapPin,
   TrendingUp,
   Award,
+  Crown,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
@@ -107,10 +108,14 @@ const JobSeekerDashboard = () => {
   const grammarScore = analysis.grammarScore || analysis.grammar_score || 0;
   const readabilityScore = analysis.readability || analysis.readability_score || 0;
   const structureScore = analysis.structureScore || analysis.structure_score || 0;
-  const overallScore = analysis.overallScore || analysis.overall_score ||
-    (atsScore && grammarScore ? Math.round((atsScore + grammarScore + readabilityScore + structureScore) / 4) : 0);
+  const overallScore = atsScore
+    ? Math.round(atsScore * 0.35 + grammarScore * 0.20 + readabilityScore * 0.20 + structureScore * 0.25)
+    : 0;
   const hasResume = !!resumeData;
+  const resumeFileName = resumeData?.originalFileName || resumeData?.originalFile || '';
   const skills = resumeData?.parsedData?.skills || [];
+  const recommendedKeywords = resumeData?.aiAnalysis?.recommendedKeywords || 
+    resumeData?.completeAnalysis?.recommended_keywords || [];
   const weaknesses = analysis.weaknesses || [];
   const suggestions = analysis.suggestions || [];
 
@@ -132,10 +137,17 @@ const JobSeekerDashboard = () => {
           <div>
             <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
               <Upload size={28} />
-              Upload Your Resume
+              {hasResume ? "Resume Uploaded" : "Upload Your Resume"}
             </h2>
             <p className="text-blue-100">
-              Get instant ATS compatibility score, AI analysis, and personalized job recommendations
+              {hasResume && resumeFileName ? (
+                <>
+                  <FileText size={16} className="inline mr-1" />
+                  <span className="font-semibold">{resumeFileName}</span> — AI analyzed and ready
+                </>
+              ) : (
+                "Get instant ATS compatibility score, AI analysis, and personalized job recommendations"
+              )}
             </p>
           </div>
           <button
@@ -143,7 +155,7 @@ const JobSeekerDashboard = () => {
             className="px-8 py-4 bg-white text-cyan-600 rounded-xl font-bold hover:bg-blue-50 transition-all shadow-lg hover:shadow-xl flex items-center gap-2 text-lg whitespace-nowrap ml-4"
           >
             <Upload size={24} />
-            Upload Resume
+            {hasResume ? "Upload New" : "Upload Resume"}
           </button>
         </div>
       </div>
@@ -197,13 +209,22 @@ const JobSeekerDashboard = () => {
 
         <div className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl p-6 border-2 border-amber-200">
           <div className="flex items-center justify-between mb-4">
-            <div className="bg-white p-3 rounded-xl"><Sparkles className="text-amber-600" size={24} /></div>
+            <div className="bg-white p-3 rounded-xl">{user?.isPremium ? <Crown className="text-amber-600" size={24} /> : <Sparkles className="text-amber-600" size={24} />}</div>
             <Award className="text-amber-600" size={32} />
           </div>
           <h3 className="text-slate-600 mb-2">Premium Status</h3>
-          <button onClick={() => navigate("/jobseeker/premium")} className="text-sm px-4 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700 transition-all">
-            Upgrade Now
-          </button>
+          {user?.isPremium ? (
+            <div>
+              <p className="text-sm text-amber-700 font-semibold flex items-center gap-1 mb-2"><CheckCircle size={14} /> Active</p>
+              <button onClick={() => navigate("/jobseeker/premium")} className="text-sm px-4 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700 transition-all">
+                Manage Plan
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => navigate("/jobseeker/premium")} className="text-sm px-4 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700 transition-all">
+              Upgrade Now
+            </button>
+          )}
         </div>
       </div>
 
@@ -303,6 +324,21 @@ const JobSeekerDashboard = () => {
         </div>
       )}
 
+      {/* Recommended Job Keywords from AI */}
+      {hasResume && recommendedKeywords.length > 0 && (
+        <div className="bg-white rounded-2xl p-6 border border-slate-200 mb-8">
+          <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+            <Sparkles className="text-amber-500" size={20} /> AI Recommended Keywords
+          </h3>
+          <p className="text-sm text-slate-500 mb-4">Based on your resume analysis, these keywords best match your profile for job searches</p>
+          <div className="flex flex-wrap gap-2">
+            {recommendedKeywords.slice(0, 20).map((keyword: string, idx: number) => (
+              <span key={idx} className="px-4 py-2 bg-gradient-to-r from-amber-50 to-yellow-50 text-amber-700 rounded-full text-sm font-semibold border border-amber-200">{keyword}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Job Matches Preview */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200 mb-8">
         <div className="flex items-center justify-between mb-6">
@@ -331,14 +367,24 @@ const JobSeekerDashboard = () => {
             <p className="text-slate-600 font-bold">No jobs found yet</p>
             <button onClick={() => resumeData && fetchMatchingJobs(resumeData._id)} className="mt-4 px-6 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700 transition-all">Refresh</button>
           </div>
-        ) : (
+        ) : (() => {
+          // Deduplicate jobs by normalized title + company
+          const seen = new Set<string>();
+          const uniqueJobs = matchingJobs.filter((job: any) => {
+            const key = `${(job.title || '').toLowerCase().trim()}|${(job.company || '').toLowerCase().trim()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {matchingJobs.slice(0, 6).map((job: any, idx: number) => {
+            {uniqueJobs.slice(0, 6).map((job: any, idx: number) => {
               const platform = (job.source || job.platform || 'unknown').toLowerCase();
               const platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
-              const platformColor = platform === 'rozee' ? 'bg-green-100 text-green-700' :
+              const platformColor = platform === 'indeed' ? 'bg-indigo-100 text-indigo-700' :
+                platform === 'glassdoor' ? 'bg-emerald-100 text-emerald-700' :
                 platform === 'remotive' ? 'bg-blue-100 text-blue-700' :
-                platform === 'themuse' ? 'bg-purple-100 text-purple-700' :
+                platform === 'jobicy' ? 'bg-purple-100 text-purple-700' :
                 platform === 'arbeitnow' ? 'bg-teal-100 text-teal-700' :
                 platform === 'usajobs' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600';
               return (
@@ -359,10 +405,12 @@ const JobSeekerDashboard = () => {
               );
             })}
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Premium CTA */}
+      {!user?.isPremium && (
       <div className="bg-gradient-to-br from-blue-900 via-cyan-900 to-blue-900 rounded-2xl p-8 text-white text-center relative overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-400 rounded-full filter blur-3xl"></div>
@@ -375,6 +423,7 @@ const JobSeekerDashboard = () => {
           <button onClick={() => navigate("/jobseeker/premium")} className="bg-cyan-500 hover:bg-cyan-400 text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all shadow-lg">Upgrade Now</button>
         </div>
       </div>
+      )}
     </DashboardLayout>
   );
 };

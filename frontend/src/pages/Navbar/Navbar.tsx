@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Brain,
   Menu,
@@ -15,7 +15,7 @@ const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false); // Change to true to see logged-in state
+  const [isLoggedIn] = useState(false); // Change to true to see logged-in state
 
   useEffect(() => {
     const handleScroll = () => {

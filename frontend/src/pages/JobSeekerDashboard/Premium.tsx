@@ -1,21 +1,21 @@
-import React, { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../../context/AuthContext";
+// useAuth import removed
 import axios from "axios";
 import {
   Crown,
   ArrowLeft,
   Check,
   Zap,
-  Star,
   Award,
   Sparkles,
   TrendingUp,
-  Shield,
   Infinity,
   CreditCard,
   Loader,
   CheckCircle,
+  ExternalLink,
+  XCircle,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -23,9 +23,9 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const Premium = () => {
   const [selectedPlan, setSelectedPlan] = useState<"monthly" | "yearly">("monthly");
   const [processing, setProcessing] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<any>(null);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const plans = {
     monthly: {
@@ -71,61 +71,91 @@ const Premium = () => {
       description: "Scan and analyze as many resumes as you need",
       free: false,
     },
-    {
-      icon: Star,
-      title: "Cover Letter Generator",
-      description: "AI-powered cover letters for each application",
-      free: false,
-    },
-    {
-      icon: Shield,
-      title: "Anomaly Detection",
-      description: "Advanced protection against fake job postings",
-      free: false,
-    },
-    {
-      icon: Crown,
-      title: "Interview Preparation",
-      description: "AI-powered interview questions and tips",
-      free: false,
-    },
   ];
 
   const freeFeatures = [
     "Basic resume analysis",
     "Job recommendations",
-    "5 resume scans per month",
+    "5 resume scans per 12 hours",
     "Standard support",
   ];
 
+  // Fetch current subscription status
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await axios.get(`${API_URL}/api/subscription/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setSubscriptionStatus(res.data);
+      } catch (err) {
+        console.error("Failed to fetch subscription status:", err);
+      }
+    };
+    fetchStatus();
+  }, []);
+
   const handleSubscribe = async () => {
     setProcessing(true);
+    setError("");
     try {
       const token = localStorage.getItem("token");
       const response = await axios.post(
-        `${API_URL}/api/subscription/subscribe`,
+        `${API_URL}/api/subscription/create-checkout`,
         { plan: selectedPlan },
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
       
-      // Redirect to payment gateway or show success
-      if (response.data.paymentUrl) {
-        window.location.href = response.data.paymentUrl;
-      } else {
-        setSuccess(true);
-        setTimeout(() => {
-          navigate("/jobseeker/dashboard");
-        }, 2000);
+      if (response.data.checkoutUrl) {
+        window.location.href = response.data.checkoutUrl;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Subscription failed:", err);
+      setError(err.response?.data?.error || "Failed to start checkout. Please try again.");
       setProcessing(false);
     }
   };
 
-  if (success) {
+  const handleManageBilling = async () => {
+    setProcessing(true);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.post(
+        `${API_URL}/api/subscription/create-portal-session`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.data.portalUrl) {
+        window.location.href = response.data.portalUrl;
+      }
+    } catch (err) {
+      console.error("Failed to open billing portal:", err);
+      setProcessing(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!confirm("Are you sure you want to cancel? You'll keep access until the end of your billing period.")) return;
+    setProcessing(true);
+    try {
+      const token = localStorage.getItem("token");
+      await axios.post(
+        `${API_URL}/api/subscription/cancel`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setSubscriptionStatus((prev: any) => ({ ...prev, cancelAtPeriodEnd: true }));
+      setProcessing(false);
+    } catch (err) {
+      console.error("Failed to cancel subscription:", err);
+      setProcessing(false);
+    }
+  };
+
+  if (false) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center">
@@ -218,7 +248,7 @@ const Premium = () => {
               disabled
               className="w-full py-4 bg-gray-100 text-gray-600 rounded-xl font-semibold cursor-not-allowed"
             >
-              Current Plan
+              {subscriptionStatus?.isPremium ? "Free Tier" : "Current Plan"}
             </button>
           </div>
 
@@ -271,6 +301,36 @@ const Premium = () => {
                 </>
               )}
             </button>
+            {subscriptionStatus?.isPremium && (
+              <div className="mt-3 space-y-2">
+                <button
+                  onClick={handleManageBilling}
+                  disabled={processing}
+                  className="w-full py-3 bg-blue-500/20 text-white rounded-xl font-semibold hover:bg-blue-500/30 transition-all disabled:opacity-50"
+                >
+                  <ExternalLink className="w-4 h-4 inline mr-2" />
+                  Manage Billing
+                </button>
+                {!subscriptionStatus.cancelAtPeriodEnd && (
+                  <button
+                    onClick={handleCancelSubscription}
+                    disabled={processing}
+                    className="w-full py-3 bg-red-500/20 text-red-200 rounded-xl font-semibold hover:bg-red-500/30 transition-all disabled:opacity-50"
+                  >
+                    <XCircle className="w-4 h-4 inline mr-2" />
+                    Cancel Subscription
+                  </button>
+                )}
+                {subscriptionStatus.cancelAtPeriodEnd && (
+                  <p className="text-center text-yellow-200 text-sm">
+                    Cancels at end of period ({new Date(subscriptionStatus.validUntil).toLocaleDateString()})
+                  </p>
+                )}
+              </div>
+            )}
+            {error && (
+              <p className="text-center text-red-200 text-sm mt-3">{error}</p>
+            )}
             <p className="text-center text-blue-100 text-sm mt-4">
               Cancel anytime • No long-term commitment
             </p>

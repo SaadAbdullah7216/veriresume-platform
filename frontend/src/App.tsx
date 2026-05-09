@@ -15,10 +15,11 @@ import AdminAnomalies from "./pages/AdminDashboard/AdminAnomalies";
 import AdminAnalytics from "./pages/AdminDashboard/AdminAnalytics";
 import AdminPayments from "./pages/AdminDashboard/AdminPayments";
 import AdminPremium from "./pages/AdminDashboard/AdminPremium";
-import AdminReports from "./pages/AdminDashboard/AdminReports";
 import AdminSettings from "./pages/AdminDashboard/AdminSettings";
 import AdminLogs from "./pages/AdminDashboard/AdminLogs";
 import AIAnalyticsPage from "./pages/AIAnalytics/AIAnalytics";
+import PaymentSuccess from "./pages/PaymentSuccess/PaymentSuccess";
+import PaymentCancel from "./pages/PaymentCancel/PaymentCancel";
 
 // Job Seeker Dashboard Pages
 import {
@@ -33,6 +34,10 @@ import {
   Reanalyze,
   MyApplications,
   ExploreCompanies,
+  FindJobs,
+  JobDetailsPage,
+  SavedJobs,
+  ResumeEnhancementFraud,
 } from "./pages/JobSeekerDashboard";
 
 const App = () => {
@@ -128,6 +133,16 @@ const App = () => {
             } 
           />
           
+          {/* Job Seeker - Resume Enhancement & Fraud Detection (Module 3) */}
+          <Route 
+            path="/jobseeker/enhancement-fraud" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <ResumeEnhancementFraud />
+              </ProtectedRoute>
+            } 
+          />
+          
           {/* Job Seeker - Notifications */}
           <Route 
             path="/jobseeker/notifications" 
@@ -184,6 +199,54 @@ const App = () => {
             element={
               <ProtectedRoute requiredRole="jobseeker">
                 <ExploreCompanies />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Job Seeker - Find Jobs (JSearch) */}
+          <Route 
+            path="/jobseeker/find-jobs" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <FindJobs />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Job Seeker - Job Details */}
+          <Route 
+            path="/jobseeker/job/:jobId" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <JobDetailsPage />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Job Seeker - Saved Jobs */}
+          <Route 
+            path="/jobseeker/saved-jobs" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <SavedJobs />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Subscription Payment Pages */}
+          <Route 
+            path="/subscription/success" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <PaymentSuccess />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/subscription/cancel" 
+            element={
+              <ProtectedRoute requiredRole="jobseeker">
+                <PaymentCancel />
               </ProtectedRoute>
             } 
           />
@@ -260,14 +323,6 @@ const App = () => {
             element={
               <ProtectedRoute requiredRole="admin">
                 <AdminPremium />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/admin/reports" 
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminReports />
               </ProtectedRoute>
             } 
           />

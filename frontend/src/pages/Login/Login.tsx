@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { Mail, Lock, Brain, AlertCircle, Chrome } from "lucide-react";
+import { Mail, Lock, Brain, AlertCircle, Globe } from "lucide-react";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -178,7 +178,7 @@ const Login = () => {
             onClick={handleGoogleSignIn}
             className="w-full bg-white border-2 border-slate-300 hover:border-slate-400 text-slate-700 font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-3 hover:bg-slate-50"
           >
-            <Chrome size={20} className="text-slate-600" />
+            <Globe size={20} className="text-slate-600" />
             Sign in with Google
           </button>
 

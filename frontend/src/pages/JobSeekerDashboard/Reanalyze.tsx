@@ -1,13 +1,13 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../../context/AuthContext";
+// useAuth import removed
 import axios from "axios";
 import {
   RefreshCw,
   ArrowLeft,
   FileText,
   Zap,
-  Loader,
+// Loader removed
   CheckCircle,
   AlertCircle,
   TrendingUp,

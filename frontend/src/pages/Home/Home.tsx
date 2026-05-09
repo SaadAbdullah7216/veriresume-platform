@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+
 import {
   Brain,
   FileText,
@@ -10,25 +10,17 @@ import {
   TrendingUp,
   CheckCircle,
   Star,
-  ArrowRight,
-  Play,
-  Linkedin,
-  Twitter,
-  Github,
-  Mail,
   ChevronLeft,
   ChevronRight,
+  Globe,
 } from "lucide-react";
 import Navbar from "../Navbar/Navbar";
 
 const Home = () => {
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
-  const [scrolled, setScrolled] = useState(false);
-  const navigate = useNavigate();
-
   useEffect(() => {
     const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
+      // scroll logic here if needed
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
@@ -621,25 +613,7 @@ const Home = () => {
                   href="#"
                   className="bg-slate-800 hover:bg-cyan-600 p-3 rounded-lg transition-colors"
                 >
-                  <Linkedin size={20} />
-                </a>
-                <a
-                  href="#"
-                  className="bg-slate-800 hover:bg-cyan-600 p-3 rounded-lg transition-colors"
-                >
-                  <Twitter size={20} />
-                </a>
-                <a
-                  href="#"
-                  className="bg-slate-800 hover:bg-cyan-600 p-3 rounded-lg transition-colors"
-                >
-                  <Github size={20} />
-                </a>
-                <a
-                  href="#"
-                  className="bg-slate-800 hover:bg-cyan-600 p-3 rounded-lg transition-colors"
-                >
-                  <Mail size={20} />
+                  <Globe size={20} />
                 </a>
               </div>
             </div>

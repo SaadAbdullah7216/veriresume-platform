@@ -212,7 +212,7 @@ const AdminDashboard = () => {
                 </div>
 
                 <div
-                  onClick={() => navigate("/admin/payments")}
+                  onClick={() => navigate("/admin/users?role=premium")}
                   className="bg-white rounded-2xl p-6 border border-slate-200 hover:border-green-400 transition-all hover:shadow-lg cursor-pointer group"
                 >
                   <div className="flex items-center justify-between mb-4">
@@ -223,7 +223,7 @@ const AdminDashboard = () => {
                   </div>
                   <h3 className="text-slate-600 text-sm mb-1">Premium Users</h3>
                   <p className="text-3xl font-bold text-slate-900">{stats.premiumUsers?.toLocaleString() || 0}</p>
-                  <p className="text-xs text-green-600 mt-2">${stats.premiumRevenue?.toLocaleString() || 0}/month</p>
+                  <p className="text-xs text-green-600 mt-2 group-hover:underline">Click to view premium users →</p>
                 </div>
 
                 <div

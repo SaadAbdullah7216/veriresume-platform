@@ -11,9 +11,12 @@ from pathlib import Path
 
 # File processing
 try:
-    import pymupdf as fitz  # PDF reading
+    import fitz  # PDF reading
 except ImportError:
-    fitz = None
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        fitz = None
 
 try:
     from docx import Document  # DOCX reading
@@ -115,6 +118,10 @@ class ResumeParser:
                 return f.read().strip()
         else:
             raise ValueError(f"Unsupported format: {ext}")
+
+    def parse_resume_from_file(self, file_path: str) -> Dict:
+        """Compatibility wrapper for file-based callers."""
+        return self.parse_resume(file_path)
     
     def extract_name(self, text: str) -> str:
         """Extract candidate name"""

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import axios from "axios";
 import {
   Home,
   Users,
@@ -9,7 +10,6 @@ import {
   Brain,
   CreditCard,
   FileText,
-  BarChart3,
   Settings,
   Clock,
   Menu,
@@ -17,8 +17,8 @@ import {
   ChevronRight,
   Shield,
   Send,
-  PlayCircle,
   LogOut,
+  X,
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -32,13 +32,44 @@ interface AdminLayoutProps {
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, badge, headerExtra }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({ users: true, analytics: true });
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementMessage, setAnnouncementMessage] = useState("");
+  const [announcementTarget, setAnnouncementTarget] = useState("all");
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const { logout } = useAuth();
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
   const handleLogout = () => {
     logout();
     navigate("/login");
+  };
+
+  const handleSendAnnouncement = async () => {
+    if (!announcementTitle.trim() || !announcementMessage.trim()) return;
+    try {
+      setSending(true);
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_URL}/api/admin/announcement`,
+        { title: announcementTitle, message: announcementMessage, targets: announcementTarget },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setSendResult(res.data.message || "Announcement sent!");
+      setAnnouncementTitle("");
+      setAnnouncementMessage("");
+      setTimeout(() => {
+        setShowAnnouncementModal(false);
+        setSendResult(null);
+      }, 2000);
+    } catch {
+      setSendResult("Failed to send announcement");
+    } finally {
+      setSending(false);
+    }
   };
 
   const toggleMenu = (menu: string) => {
@@ -75,7 +106,6 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, ba
     },
     { icon: CreditCard, label: "Payments", path: "/admin/payments" },
     { icon: FileText, label: "Premium Plans", path: "/admin/premium" },
-    { icon: BarChart3, label: "Reports", path: "/admin/reports" },
     { icon: Settings, label: "Settings", path: "/admin/settings" },
     { icon: Clock, label: "Logs", path: "/admin/logs" },
   ];
@@ -168,13 +198,12 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, ba
 
         {sidebarOpen && (
           <div className="p-4 border-t border-white/10 space-y-3">
-            <button className="w-full flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-xl hover:from-cyan-700 hover:to-blue-700 transition-all">
+            <button
+              onClick={() => setShowAnnouncementModal(true)}
+              className="w-full flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-xl hover:from-cyan-700 hover:to-blue-700 transition-all"
+            >
               <Send size={18} />
               <span className="text-sm font-semibold">Send Announcement</span>
-            </button>
-            <button className="w-full flex items-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all">
-              <PlayCircle size={18} />
-              <span className="text-sm font-semibold">Maintenance Mode</span>
             </button>
             <button
               onClick={handleLogout}
@@ -205,6 +234,76 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title, subtitle, ba
         )}
         <main className="p-8">{children}</main>
       </div>
+
+      {/* Announcement Modal */}
+      {showAnnouncementModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-xl">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Send size={20} className="text-cyan-600" />
+                Send Announcement
+              </h2>
+              <button
+                onClick={() => { setShowAnnouncementModal(false); setSendResult(null); }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              {sendResult ? (
+                <div className={`text-center py-8 ${sendResult.includes("Failed") ? "text-red-600" : "text-green-600"}`}>
+                  <p className="text-lg font-bold">{sendResult}</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 block mb-2">Send To</label>
+                    <select
+                      value={announcementTarget}
+                      onChange={(e) => setAnnouncementTarget(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-cyan-300 focus:border-cyan-400 outline-none text-sm"
+                    >
+                      <option value="all">All Users (HR + Job Seekers)</option>
+                      <option value="hr">HR Recruiters Only</option>
+                      <option value="jobseeker">Job Seekers Only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 block mb-2">Title</label>
+                    <input
+                      type="text"
+                      value={announcementTitle}
+                      onChange={(e) => setAnnouncementTitle(e.target.value)}
+                      placeholder="Announcement title..."
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-cyan-300 focus:border-cyan-400 outline-none text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 block mb-2">Message</label>
+                    <textarea
+                      value={announcementMessage}
+                      onChange={(e) => setAnnouncementMessage(e.target.value)}
+                      placeholder="Write your announcement message..."
+                      rows={4}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-cyan-300 focus:border-cyan-400 outline-none text-sm resize-none"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSendAnnouncement}
+                    disabled={sending || !announcementTitle.trim() || !announcementMessage.trim()}
+                    className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-700 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Send size={16} />
+                    {sending ? "Sending..." : "Send Announcement"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

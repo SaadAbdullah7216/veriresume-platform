@@ -7,12 +7,23 @@ import {
   FileText,
   CheckCircle,
   AlertCircle,
-  ArrowLeft,
+// ArrowLeft removed
   Loader,
   X,
   Sparkles,
   Briefcase,
   Search,
+  Brain,
+  Target,
+  Star,
+  TrendingUp,
+  MapPin,
+  ExternalLink,
+// Filter removed
+  Globe,
+  Zap,
+  BookmarkPlus,
+  BookmarkCheck,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 
@@ -31,8 +42,33 @@ const UploadResume = () => {
   const [matchingJobs, setMatchingJobs] = useState<any[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [resumeSkills, setResumeSkills] = useState<string[]>([]);
-  const [parsedData, setParsedData] = useState<any>(null);
+  const [, setParsedData] = useState<any>(null);
   const [selectedSearchKeywords, setSelectedSearchKeywords] = useState<string[]>([]);
+
+  // ── Deep AI Analysis State ──
+  const [deepAnalysis, setDeepAnalysis] = useState<any>(null);
+  const [loadingDeepAnalysis, setLoadingDeepAnalysis] = useState(false);
+  const [deepAnalysisError, setDeepAnalysisError] = useState("");
+
+  // ── Indeed Job Search State ──
+  const [indeedJobs, setIndeedJobs] = useState<any[]>([]);
+  const [loadingIndeed, setLoadingIndeed] = useState(false);
+  const [indeedSearchDone, setIndeedSearchDone] = useState(false);
+  const [indeedCountry, setIndeedCountry] = useState("us");
+  const [indeedLocation, setIndeedLocation] = useState("");
+
+  // ── LinkedIn Job Search State ──
+  const [linkedinJobs, setLinkedinJobs] = useState<any[]>([]);
+  const [loadingLinkedin, setLoadingLinkedin] = useState(false);
+  const [linkedinSearchDone, setLinkedinSearchDone] = useState(false);
+  const [linkedinLocation, setLinkedinLocation] = useState("");
+  const [linkedinTimeRange, setLinkedinTimeRange] = useState("24h");
+
+  // ── Save Job State ──
+  const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
+  const [savingJob, setSavingJob] = useState<string | null>(null);
+  const [isPremiumError, setIsPremiumError] = useState(false);
+
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -42,6 +78,66 @@ const UploadResume = () => {
         ? prev.filter(k => k !== keyword)
         : [...prev, keyword]
     );
+  };
+
+  // Fetch saved job IDs on mount
+  React.useEffect(() => {
+    const fetchSavedJobs = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await axios.get(`${API_URL}/api/jobseeker/saved-jobs`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.data.success) {
+          const ids = new Set<string>(response.data.data.map((j: any) => j.jobId));
+          setSavedJobIds(ids);
+        }
+      } catch { /* ignore */ }
+    };
+    if (user) fetchSavedJobs();
+  }, [user]);
+
+  const handleSaveJob = async (job: any, source: string) => {
+    const jobId = job.id || job.url || job.applyUrl || `${source}-${job.title}-${job.company}`;
+    const token = localStorage.getItem("token");
+    setSavingJob(jobId);
+    try {
+      if (savedJobIds.has(jobId)) {
+        const response = await axios.get(`${API_URL}/api/jobseeker/saved-jobs`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const savedJob = response.data.data?.find((s: any) => s.jobId === jobId);
+        if (savedJob) {
+          await axios.delete(`${API_URL}/api/jobseeker/saved-jobs/${savedJob._id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setSavedJobIds((prev) => { const next = new Set(prev); next.delete(jobId); return next; });
+        }
+      } else {
+        await axios.post(
+          `${API_URL}/api/jobseeker/saved-jobs`,
+          {
+            jobId,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            type: job.type || job.job_type || "",
+            salary: job.salary || "",
+            description: (job.description || "").substring(0, 500),
+            applyUrl: job.applyUrl || job.url || "",
+            logo: job.logo || job.company_logo || "",
+            source,
+            postedDate: job.postedDate || job.posted_date || "",
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        setSavedJobIds((prev) => new Set(prev).add(jobId));
+      }
+    } catch (err: any) {
+      console.error("Save job error:", err);
+    } finally {
+      setSavingJob(null);
+    }
   };
 
   // Check if user is logged in
@@ -171,7 +267,6 @@ const UploadResume = () => {
           // Also pull recommended keywords from AI analysis if available
           const aiAnalysisData = response.data.data?.aiAnalysis;
           if (aiAnalysisData?.recommendedKeywords && aiAnalysisData.recommendedKeywords.length > 0) {
-            // Merge parser skills with AI recommended keywords (deduplicate)
             allSkills = [...new Set([
               ...allSkills,
               ...(aiAnalysisData.recommendedKeywords || []),
@@ -200,6 +295,12 @@ const UploadResume = () => {
           
           // Automatically fetch matching jobs with tech field targeting
           await fetchMatchingJobs(uploadedResumeId, targetRole);
+
+          // Trigger deep AI analysis (Groq + Gemini) in background
+          // Skip if Python was unavailable during upload (no rawText stored) — user can retry manually
+          if (!analysisPending) {
+            runDeepAnalysis(uploadedResumeId);
+          }
         }
         
         setUploadSuccess(true);
@@ -211,6 +312,9 @@ const UploadResume = () => {
         setTimeout(() => {
           navigate("/login");
         }, 2000);
+      } else if (error.response?.status === 429 && error.response?.data?.requiresPremium) {
+        setError(error.response.data.error);
+        setIsPremiumError(true);
       } else {
         setError(
           error.response?.data?.error || error.message || "Failed to upload resume. Please try again."
@@ -237,8 +341,18 @@ const UploadResume = () => {
       );
 
       if (response.data.success) {
-        const allJobs = response.data.data?.allMatchingJobs || response.data.data?.matchingJobs || [];
-        console.log("Matching jobs found:", allJobs.length);
+        const rawJobs = response.data.data?.allMatchingJobs || response.data.data?.matchingJobs || [];
+        // Filter out jobs with invalid/broken URLs
+        const allJobs = rawJobs.filter((job: any) => {
+          if (!job.url || job.url === '#') return false;
+          try {
+            const u = new URL(job.url);
+            // Reject bare domain roots (e.g. https://indeed.com or https://indeed.com/)
+            if (u.pathname === '/' && !u.search) return false;
+            return true;
+          } catch { return false; }
+        });
+        console.log(`Matching jobs found: ${rawJobs.length} total, ${allJobs.length} with valid URLs`);
         setMatchingJobs(allJobs);
         // Cache jobs in localStorage so other pages can use them
         localStorage.setItem('veriresume_cached_jobs', JSON.stringify(allJobs));
@@ -248,6 +362,145 @@ const UploadResume = () => {
       console.error("Error fetching jobs:", error);
     } finally {
       setLoadingJobs(false);
+    }
+  };
+
+  // ── Deep AI Analysis (Groq + Gemini combined) ──
+  const runDeepAnalysis = async (id: string) => {
+    setLoadingDeepAnalysis(true);
+    setDeepAnalysisError("");
+    try {
+      console.log("🧠 Starting deep AI analysis (Groq + Gemini)...");
+      const response = await axios.post(
+        `${API_URL}/api/jobseeker/deep-analyze`,
+        { resumeId: id },
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+          timeout: 120000,
+        }
+      );
+      if (response.data.success && response.data.data) {
+        const deep = response.data.data;
+        setDeepAnalysis(deep);
+        console.log("✅ Deep analysis complete:", deep);
+
+        // Merge deep analysis keywords into resumeSkills
+        if (deep.recommended_job_keywords && deep.recommended_job_keywords.length > 0) {
+          setResumeSkills((prev) => {
+            const merged = [...new Set([...deep.recommended_job_keywords, ...prev])];
+
+            // ── Auto-suggest: pre-select the best keywords ──
+            // Prioritize: suggested job titles > skill_keywords > recommended_job_keywords
+            const suggestedTitles: string[] = deep.suggested_job_titles || [];
+            const skillKeywords: string[] = deep.skill_keywords || [];
+            const autoSelect = [
+              ...suggestedTitles.slice(0, 5),
+              ...skillKeywords.slice(0, 10),
+              ...deep.recommended_job_keywords.slice(0, 5),
+            ];
+            // Deduplicate case-insensitively, keep only items present in merged
+            const mergedLower = new Set(merged.map(k => k.toLowerCase()));
+            const seen = new Set<string>();
+            const finalAutoSelect: string[] = [];
+            for (const kw of autoSelect) {
+              const lower = kw.toLowerCase();
+              if (!seen.has(lower) && mergedLower.has(lower)) {
+                // Find the exact-case version in merged
+                const exact = merged.find(m => m.toLowerCase() === lower) || kw;
+                finalAutoSelect.push(exact);
+                seen.add(lower);
+              }
+            }
+            if (finalAutoSelect.length > 0) {
+              console.log(`🎯 Auto-selected ${finalAutoSelect.length} keywords:`, finalAutoSelect);
+              setSelectedSearchKeywords(finalAutoSelect);
+            }
+
+            return merged;
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error("Deep analysis error:", err);
+      setDeepAnalysisError(err.response?.data?.error || "Deep analysis failed. Basic analysis is still available above.");
+    } finally {
+      setLoadingDeepAnalysis(false);
+    }
+  };
+
+  // ── Search Indeed Jobs via RapidAPI ──
+  const searchIndeedJobs = async () => {
+    const keywords = selectedSearchKeywords.length > 0
+      ? selectedSearchKeywords
+      : resumeSkills.slice(0, 5);
+
+    if (keywords.length === 0) return;
+
+    setLoadingIndeed(true);
+    setIndeedSearchDone(false);
+    try {
+      console.log("🔍 Searching Indeed jobs with keywords:", keywords);
+      const response = await axios.post(
+        `${API_URL}/api/jobseeker/search-indeed`,
+        {
+          keywords,
+          location: indeedLocation || undefined,
+          country: indeedCountry,
+          maxResults: 15,
+        },
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+          timeout: 90000,
+        }
+      );
+      if (response.data.success) {
+        const jobs = response.data.data?.jobs || [];
+        console.log(`✅ Indeed jobs found: ${jobs.length}`);
+        setIndeedJobs(jobs);
+      }
+    } catch (err: any) {
+      console.error("Indeed search error:", err);
+    } finally {
+      setLoadingIndeed(false);
+      setIndeedSearchDone(true);
+    }
+  };
+
+  // ── Search LinkedIn Jobs via RapidAPI ──
+  const searchLinkedInJobs = async () => {
+    const keywords = selectedSearchKeywords.length > 0
+      ? selectedSearchKeywords
+      : resumeSkills.slice(0, 5);
+
+    if (keywords.length === 0) return;
+
+    setLoadingLinkedin(true);
+    setLinkedinSearchDone(false);
+    try {
+      console.log("🔗 Searching LinkedIn jobs with keywords:", keywords);
+      const response = await axios.post(
+        `${API_URL}/api/jobseeker/search-linkedin`,
+        {
+          keywords,
+          location: linkedinLocation || undefined,
+          limit: 20,
+          timeRange: linkedinTimeRange,
+        },
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+          timeout: 60000,
+        }
+      );
+      if (response.data.success) {
+        const jobs = response.data.data?.jobs || [];
+        console.log(`✅ LinkedIn jobs found: ${jobs.length}`);
+        setLinkedinJobs(jobs);
+      }
+    } catch (err: any) {
+      console.error("LinkedIn search error:", err);
+    } finally {
+      setLoadingLinkedin(false);
+      setLinkedinSearchDone(true);
     }
   };
 
@@ -286,8 +539,17 @@ const UploadResume = () => {
               <div className="flex-1">
                 <p className="font-semibold text-red-900">Upload failed</p>
                 <p className="text-sm text-red-700">{error}</p>
+                {isPremiumError && (
+                  <button
+                    onClick={() => navigate("/jobseeker/premium")}
+                    className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg font-semibold text-sm hover:from-amber-600 hover:to-amber-700 transition-all shadow-md"
+                  >
+                    <Sparkles size={16} />
+                    Upgrade Now
+                  </button>
+                )}
               </div>
-              <button onClick={() => setError("")} className="text-red-600 hover:text-red-800">
+              <button onClick={() => { setError(""); setIsPremiumError(false); }} className="text-red-600 hover:text-red-800">
                 <X size={20} />
               </button>
             </div>
@@ -432,37 +694,286 @@ const UploadResume = () => {
                 <h3 className="text-2xl font-bold text-slate-900 mb-4">Resume Analysis Results</h3>
                 <div className="inline-flex items-center justify-center w-32 h-32 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg">
                   <div>
-                    <p className="text-4xl font-bold">{analysisData?.overallScore || analysisData?.overall_score || Math.round(((analysisData?.atsScore || analysisData?.ats_score || 75) + (analysisData?.grammarScore || analysisData?.grammar_score || 75) + (analysisData?.readability || analysisData?.readability_score || 75) + (analysisData?.structureScore || analysisData?.structure_score || 75)) / 4)}%</p>
+                    <p className="text-4xl font-bold">{Math.round(
+                      (analysisData?.atsScore ?? analysisData?.ats_score ?? 0) * 0.35 +
+                      (analysisData?.grammarScore ?? analysisData?.grammar_score ?? 0) * 0.20 +
+                      (analysisData?.readability ?? analysisData?.readability_score ?? 0) * 0.20 +
+                      (analysisData?.structureScore ?? analysisData?.structure_score ?? 0) * 0.25
+                    )}%</p>
                     <p className="text-xs uppercase tracking-wider opacity-80">Overall</p>
                   </div>
                 </div>
               </div>
 
               {/* Score Grid */}
-              <div className="mb-8">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
-                    <p className="text-sm text-blue-600 font-semibold uppercase mb-2">ATS Score</p>
-                    <p className="text-3xl font-bold text-blue-900">{analysisData?.atsScore || analysisData?.ats_score || 75}%</p>
-                    <p className="text-xs text-blue-500 mt-1">Applicant Tracking System</p>
-                  </div>
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
-                    <p className="text-sm text-green-600 font-semibold uppercase mb-2">Grammar</p>
-                    <p className="text-3xl font-bold text-green-900">{analysisData?.grammarScore || analysisData?.grammar_score || 75}%</p>
-                    <p className="text-xs text-green-500 mt-1">Language Quality</p>
-                  </div>
-                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
-                    <p className="text-sm text-purple-600 font-semibold uppercase mb-2">Readability</p>
-                    <p className="text-3xl font-bold text-purple-900">{analysisData?.readability || analysisData?.readability_score || 75}%</p>
-                    <p className="text-xs text-purple-500 mt-1">Ease of Reading</p>
-                  </div>
-                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-6 rounded-xl border border-orange-200">
-                    <p className="text-sm text-orange-600 font-semibold uppercase mb-2">Structure</p>
-                    <p className="text-3xl font-bold text-orange-900">{analysisData?.structureScore || analysisData?.structure_score || 75}%</p>
-                    <p className="text-xs text-orange-500 mt-1">Resume Organization</p>
+              {analysisPending ? (
+                <div className="mb-8 p-5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+                  <AlertCircle className="text-amber-500 mt-0.5 shrink-0" size={20} />
+                  <div className="flex-1">
+                    <p className="font-semibold text-amber-800">AI Analysis Pending</p>
+                    <p className="text-sm text-amber-700 mt-1">The AI analysis service was unavailable during upload. Click below to run analysis now.</p>
+                    <button
+                      onClick={() => { if (resumeId) { setAnalysisPending(false); runDeepAnalysis(resumeId); } }}
+                      disabled={loadingDeepAnalysis}
+                      className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {loadingDeepAnalysis ? <Loader size={14} className="animate-spin" /> : <Brain size={14} />}
+                      {loadingDeepAnalysis ? "Analyzing..." : "Run Deep Analysis Now"}
+                    </button>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="mb-8">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
+                      <p className="text-sm text-blue-600 font-semibold uppercase mb-2">ATS Score</p>
+                      <p className="text-3xl font-bold text-blue-900">{analysisData?.atsScore ?? analysisData?.ats_score ?? 0}%</p>
+                      <p className="text-xs text-blue-500 mt-1">Applicant Tracking System</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
+                      <p className="text-sm text-green-600 font-semibold uppercase mb-2">Grammar</p>
+                      <p className="text-3xl font-bold text-green-900">{analysisData?.grammarScore ?? analysisData?.grammar_score ?? 0}%</p>
+                      <p className="text-xs text-green-500 mt-1">Language Quality</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
+                      <p className="text-sm text-purple-600 font-semibold uppercase mb-2">Readability</p>
+                      <p className="text-3xl font-bold text-purple-900">{analysisData?.readability ?? analysisData?.readability_score ?? 0}%</p>
+                      <p className="text-xs text-purple-500 mt-1">Ease of Reading</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-6 rounded-xl border border-orange-200">
+                      <p className="text-sm text-orange-600 font-semibold uppercase mb-2">Structure</p>
+                      <p className="text-3xl font-bold text-orange-900">{analysisData?.structureScore ?? analysisData?.structure_score ?? 0}%</p>
+                      <p className="text-xs text-orange-500 mt-1">Resume Organization</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Deep AI Analysis Section (Groq + Gemini) ── */}
+              {loadingDeepAnalysis && (
+                <div className="mb-8 p-6 bg-gradient-to-br from-violet-50 to-indigo-50 border border-violet-200 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <Loader className="animate-spin text-violet-600" size={24} />
+                    <div>
+                      <p className="font-bold text-violet-900">Deep AI Analysis in Progress...</p>
+                      <p className="text-sm text-violet-600">Analyzing with Groq (Llama 3.3) + Gemini 2.0 Flash</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {deepAnalysisError && (
+                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+                  <AlertCircle className="text-amber-600 mt-0.5 shrink-0" size={18} />
+                  <p className="text-sm text-amber-700">{deepAnalysisError}</p>
+                </div>
+              )}
+
+              {deepAnalysis && (
+                <div className="mb-8 space-y-6">
+                  {/* Deep Analysis Header */}
+                  <div className="p-6 bg-gradient-to-br from-violet-50 via-indigo-50 to-purple-50 border border-violet-200 rounded-2xl">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                        <Brain size={22} className="text-violet-600" />
+                        Deep AI Analysis
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        {deepAnalysis.providers_used?.includes("groq") && (
+                          <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-bold">Groq (Llama 3.3)</span>
+                        )}
+                        {deepAnalysis.providers_used?.includes("gemini") && (
+                          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">Gemini 2.0</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Profile Summary */}
+                    {deepAnalysis.profile_summary && (
+                      <div className="mb-4 p-4 bg-white/70 rounded-xl border border-violet-100">
+                        <p className="text-sm text-slate-700 leading-relaxed">{deepAnalysis.profile_summary}</p>
+                      </div>
+                    )}
+
+                    {/* Career Info Row */}
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-violet-100">
+                        <p className="text-xs text-slate-500 uppercase font-semibold">Career Level</p>
+                        <p className="text-lg font-bold text-violet-900 capitalize">{deepAnalysis.career_level || "N/A"}</p>
+                      </div>
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-violet-100">
+                        <p className="text-xs text-slate-500 uppercase font-semibold">Experience</p>
+                        <p className="text-lg font-bold text-violet-900">{deepAnalysis.years_experience || "N/A"}</p>
+                      </div>
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-violet-100">
+                        <p className="text-xs text-slate-500 uppercase font-semibold">Overall Score</p>
+                        <p className="text-lg font-bold text-violet-900">{deepAnalysis.overall_score || "N/A"}%</p>
+                      </div>
+                    </div>
+
+                    {/* Deep Score Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-blue-100">
+                        <p className="text-xs text-blue-600 font-semibold">ATS</p>
+                        <p className="text-2xl font-bold text-blue-900">{deepAnalysis.ats_score || 0}%</p>
+                      </div>
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-green-100">
+                        <p className="text-xs text-green-600 font-semibold">Grammar</p>
+                        <p className="text-2xl font-bold text-green-900">{deepAnalysis.grammar_score || 0}%</p>
+                      </div>
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-purple-100">
+                        <p className="text-xs text-purple-600 font-semibold">Readability</p>
+                        <p className="text-2xl font-bold text-purple-900">{deepAnalysis.readability_score || 0}%</p>
+                      </div>
+                      <div className="bg-white/70 p-3 rounded-xl text-center border border-orange-100">
+                        <p className="text-xs text-orange-600 font-semibold">Structure</p>
+                        <p className="text-2xl font-bold text-orange-900">{deepAnalysis.structure_score || 0}%</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Technical & Soft Skills */}
+                  {(deepAnalysis.technical_skills?.length > 0 || deepAnalysis.soft_skills?.length > 0) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {deepAnalysis.technical_skills?.length > 0 && (
+                        <div className="p-5 bg-blue-50 border border-blue-200 rounded-xl">
+                          <h4 className="text-sm font-bold text-blue-900 mb-3 flex items-center gap-2">
+                            <Zap size={16} className="text-blue-600" />
+                            Technical Skills
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {deepAnalysis.technical_skills.map((skill: string, i: number) => (
+                              <span key={i} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">{skill}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {deepAnalysis.soft_skills?.length > 0 && (
+                        <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                          <h4 className="text-sm font-bold text-emerald-900 mb-3 flex items-center gap-2">
+                            <Star size={16} className="text-emerald-600" />
+                            Soft Skills
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {deepAnalysis.soft_skills.map((skill: string, i: number) => (
+                              <span key={i} className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">{skill}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Suggested Job Titles */}
+                  {deepAnalysis.suggested_job_titles?.length > 0 && (
+                    <div className="p-5 bg-amber-50 border border-amber-200 rounded-xl">
+                      <h4 className="text-sm font-bold text-amber-900 mb-3 flex items-center gap-2">
+                        <Target size={16} className="text-amber-600" />
+                        Suggested Job Titles for You
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        {deepAnalysis.suggested_job_titles.map((title: string, i: number) => (
+                          <span key={i} className="px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-semibold border border-amber-200">{title}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Deep Strengths & Weaknesses */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {deepAnalysis.strengths?.length > 0 && (
+                      <div className="p-5 bg-green-50 border border-green-200 rounded-xl">
+                        <h4 className="text-sm font-bold text-green-900 mb-3 flex items-center gap-2">
+                          <TrendingUp size={16} className="text-green-600" />
+                          Strengths
+                        </h4>
+                        <ul className="space-y-2">
+                          {deepAnalysis.strengths.slice(0, 5).map((s: string, i: number) => (
+                            <li key={i} className="text-sm text-green-700 flex items-start gap-2">
+                              <span className="mt-1.5 w-1.5 h-1.5 bg-green-400 rounded-full flex-shrink-0" />
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {deepAnalysis.weaknesses?.length > 0 && (
+                      <div className="p-5 bg-red-50 border border-red-200 rounded-xl">
+                        <h4 className="text-sm font-bold text-red-900 mb-3 flex items-center gap-2">
+                          <AlertCircle size={16} className="text-red-600" />
+                          Weaknesses
+                        </h4>
+                        <ul className="space-y-2">
+                          {deepAnalysis.weaknesses.slice(0, 5).map((w: string, i: number) => (
+                            <li key={i} className="text-sm text-red-700 flex items-start gap-2">
+                              <span className="mt-1.5 w-1.5 h-1.5 bg-red-400 rounded-full flex-shrink-0" />
+                              {w}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── AI Classified Categories (Skills, Hobbies, Education) ── */}
+              {deepAnalysis && (deepAnalysis.skill_keywords?.length > 0 || deepAnalysis.hobbies?.length > 0 || deepAnalysis.education_keywords?.length > 0) && (
+                <div className="mb-8 space-y-4">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Brain size={20} className="text-violet-600" />
+                    AI-Classified Resume Information
+                  </h3>
+                  <p className="text-xs text-slate-500 -mt-2">Groq & Gemini distinguished between your skills, hobbies, and education</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Professional Skills */}
+                    {deepAnalysis.skill_keywords?.length > 0 && (
+                      <div className="p-5 bg-cyan-50 border border-cyan-200 rounded-xl">
+                        <h4 className="text-sm font-bold text-cyan-900 mb-3 flex items-center gap-2">
+                          <Zap size={16} className="text-cyan-600" />
+                          Professional Skills
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {deepAnalysis.skill_keywords.map((skill: string, i: number) => (
+                            <span key={i} className="px-3 py-1 bg-cyan-100 text-cyan-700 rounded-full text-xs font-medium border border-cyan-200">{skill}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Hobbies & Interests */}
+                    {deepAnalysis.hobbies?.length > 0 && (
+                      <div className="p-5 bg-pink-50 border border-pink-200 rounded-xl">
+                        <h4 className="text-sm font-bold text-pink-900 mb-3 flex items-center gap-2">
+                          <Star size={16} className="text-pink-600" />
+                          Hobbies & Interests
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {deepAnalysis.hobbies.map((hobby: string, i: number) => (
+                            <span key={i} className="px-3 py-1 bg-pink-100 text-pink-700 rounded-full text-xs font-medium border border-pink-200">{hobby}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Education */}
+                    {deepAnalysis.education_keywords?.length > 0 && (
+                      <div className="p-5 bg-amber-50 border border-amber-200 rounded-xl">
+                        <h4 className="text-sm font-bold text-amber-900 mb-3 flex items-center gap-2">
+                          <Target size={16} className="text-amber-600" />
+                          Education & Certifications
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {deepAnalysis.education_keywords.map((edu: string, i: number) => (
+                            <span key={i} className="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-medium border border-amber-200">{edu}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* ── Selectable Keywords Section ── */}
               {resumeSkills && resumeSkills.length > 0 && (
@@ -537,6 +1048,364 @@ const UploadResume = () => {
                 </div>
               )}
 
+              {/* ── Indeed Job Search Section ── */}
+              {resumeSkills && resumeSkills.length > 0 && (
+                <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
+                    <Globe size={20} className="text-indigo-600" />
+                    Search Indeed Jobs
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Search Indeed for jobs matching your selected keywords using the Indeed Scraper API.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                    {/* Country Select */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Country</label>
+                      <select
+                        value={indeedCountry}
+                        onChange={(e) => setIndeedCountry(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="us">United States</option>
+                        <option value="uk">United Kingdom</option>
+                        <option value="pk">Pakistan</option>
+                        <option value="in">India</option>
+                        <option value="ca">Canada</option>
+                        <option value="au">Australia</option>
+                        <option value="de">Germany</option>
+                        <option value="ae">UAE</option>
+                      </select>
+                    </div>
+
+                    {/* Location Input */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Location (Optional)</label>
+                      <input
+                        type="text"
+                        value={indeedLocation}
+                        onChange={(e) => setIndeedLocation(e.target.value)}
+                        placeholder="e.g., New York, Remote"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    {/* Search Button */}
+                    <div className="flex items-end">
+                      <button
+                        onClick={searchIndeedJobs}
+                        disabled={loadingIndeed}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {loadingIndeed ? (
+                          <>
+                            <Loader className="animate-spin" size={16} />
+                            Searching Indeed...
+                          </>
+                        ) : (
+                          <>
+                            <Search size={16} />
+                            Search Indeed
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Indeed Results */}
+                  {loadingIndeed && (
+                    <div className="flex justify-center py-8">
+                      <div className="text-center">
+                        <Loader className="animate-spin text-indigo-600 mb-3 mx-auto" size={32} />
+                        <p className="text-sm text-slate-600 font-semibold">Searching Indeed via API...</p>
+                        <p className="text-xs text-slate-400">This may take up to a minute</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {indeedSearchDone && indeedJobs.length > 0 && (
+                    <div className="space-y-3 mt-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-slate-800">Indeed Results ({indeedJobs.length})</h4>
+                        <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">Indeed</span>
+                      </div>
+                      {indeedJobs.map((job: any, idx: number) => (
+                        <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex-1">
+                              <h5 className="text-base font-bold text-slate-900">{job.title}</h5>
+                              <p className="text-sm text-slate-600">{job.company}</p>
+                            </div>
+                            <div className="flex items-center gap-2 ml-3">
+                              {job.matchScore != null && (
+                                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
+                                  {job.matchScore}% Match
+                                </span>
+                              )}
+                              <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">Indeed</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-sm text-slate-500 mb-3">
+                            {job.location && (
+                              <span className="flex items-center gap-1">
+                                <MapPin size={14} /> {job.location}
+                              </span>
+                            )}
+                            {job.salary && (
+                              <span className="text-green-600 font-semibold">{job.salary}</span>
+                            )}
+                            {job.posted_date && (
+                              <span className="text-slate-400">• {job.posted_date}</span>
+                            )}
+                            {job.is_remote && (
+                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-medium">Remote</span>
+                            )}
+                          </div>
+
+                          {job.matchedSkills && job.matchedSkills.length > 0 && (
+                            <div className="mb-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {job.matchedSkills.map((skill: string, si: number) => (
+                                  <span key={si} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                                    ✓ {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {job.description && (
+                            <p className="text-xs text-slate-500 mb-3 line-clamp-2">{job.description}</p>
+                          )}
+
+                          <div className="flex gap-2">
+                            {(job.applyUrl || job.url) && (
+                              <a
+                                href={job.applyUrl || job.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-1 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg text-sm font-semibold hover:shadow-md transition-all text-center flex items-center justify-center gap-2"
+                              >
+                                <ExternalLink size={14} />
+                                Apply on Indeed
+                              </a>
+                            )}
+                            <button
+                              onClick={() => handleSaveJob(job, "Indeed")}
+                              disabled={savingJob === (job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`)}
+                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
+                                savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`)
+                                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                              }`}
+                              title={savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
+                            >
+                              {savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`) ? (
+                                <BookmarkCheck size={16} />
+                              ) : (
+                                <BookmarkPlus size={16} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {indeedSearchDone && indeedJobs.length === 0 && !loadingIndeed && (
+                    <div className="text-center py-6 bg-white/60 rounded-xl border border-slate-200">
+                      <p className="text-sm text-slate-500">No Indeed jobs found. Try different keywords or location.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── LinkedIn Job Search Section ── */}
+              {resumeSkills && resumeSkills.length > 0 && (
+                <div className="mb-8 p-6 bg-gradient-to-br from-sky-50 to-blue-50 border border-sky-200 rounded-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
+                    <Briefcase size={20} className="text-sky-600" />
+                    Search LinkedIn Jobs
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Search real LinkedIn job listings matching your selected keywords using the LinkedIn Job Search API.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                    {/* Location Input */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Location (Optional)</label>
+                      <input
+                        type="text"
+                        value={linkedinLocation}
+                        onChange={(e) => setLinkedinLocation(e.target.value)}
+                        placeholder="e.g., United States, Pakistan, Remote"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+
+                    {/* Time Range */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Posted Within</label>
+                      <select
+                        value={linkedinTimeRange}
+                        onChange={(e) => setLinkedinTimeRange(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-sky-500"
+                      >
+                        <option value="24h">Last 24 Hours</option>
+                        <option value="7d">Last 7 Days</option>
+                      </select>
+                    </div>
+
+                    {/* Search Button */}
+                    <div className="flex items-end">
+                      <button
+                        onClick={searchLinkedInJobs}
+                        disabled={loadingLinkedin}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white rounded-lg font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {loadingLinkedin ? (
+                          <>
+                            <Loader className="animate-spin" size={16} />
+                            Searching LinkedIn...
+                          </>
+                        ) : (
+                          <>
+                            <Search size={16} />
+                            Search LinkedIn
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* LinkedIn Results */}
+                  {loadingLinkedin && (
+                    <div className="flex justify-center py-8">
+                      <div className="text-center">
+                        <Loader className="animate-spin text-sky-600 mb-3 mx-auto" size={32} />
+                        <p className="text-sm text-slate-600 font-semibold">Searching LinkedIn jobs...</p>
+                        <p className="text-xs text-slate-400">Fetching real-time listings</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {linkedinSearchDone && linkedinJobs.length > 0 && (
+                    <div className="space-y-3 mt-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-slate-800">LinkedIn Results ({linkedinJobs.length})</h4>
+                        <span className="px-3 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold">LinkedIn</span>
+                      </div>
+                      {linkedinJobs.map((job: any, idx: number) => (
+                        <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-start gap-3 flex-1">
+                              {job.company_logo && (
+                                <img
+                                  src={job.company_logo}
+                                  alt={job.company}
+                                  className="w-10 h-10 rounded-lg object-cover border border-slate-200 flex-shrink-0"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                />
+                              )}
+                              <div>
+                                <h5 className="text-base font-bold text-slate-900">{job.title}</h5>
+                                <p className="text-sm text-slate-600">{job.company}</p>
+                                {job.company_industry && (
+                                  <p className="text-xs text-slate-400">{job.company_industry} · {job.company_size}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 ml-3">
+                              {job.matchScore != null && (
+                                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
+                                  {job.matchScore}% Match
+                                </span>
+                              )}
+                              <span className="px-2 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold">LinkedIn</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-sm text-slate-500 mb-3 flex-wrap">
+                            {job.location && (
+                              <span className="flex items-center gap-1">
+                                <MapPin size={14} /> {job.location}
+                              </span>
+                            )}
+                            {job.salary && (
+                              <span className="text-green-600 font-semibold">{job.salary}</span>
+                            )}
+                            {job.seniority && job.seniority !== 'null' && (
+                              <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium">{job.seniority}</span>
+                            )}
+                            {job.is_remote && (
+                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-medium">Remote</span>
+                            )}
+                            {job.posted_date && (
+                              <span className="text-slate-400">• {job.posted_date}</span>
+                            )}
+                          </div>
+
+                          {job.matchedSkills && job.matchedSkills.length > 0 && (
+                            <div className="mb-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {job.matchedSkills.map((skill: string, si: number) => (
+                                  <span key={si} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                                    ✓ {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {job.description && (
+                            <p className="text-xs text-slate-500 mb-3 line-clamp-2">{job.description}</p>
+                          )}
+
+                          <div className="flex gap-2">
+                            {(job.applyUrl || job.url) && (
+                              <a
+                                href={job.applyUrl || job.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-1 px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white rounded-lg text-sm font-semibold hover:shadow-md transition-all text-center flex items-center justify-center gap-2"
+                              >
+                                <ExternalLink size={14} />
+                                {job.direct_apply ? 'Apply Directly' : 'View on LinkedIn'}
+                              </a>
+                            )}
+                            <button
+                              onClick={() => handleSaveJob(job, "LinkedIn")}
+                              disabled={savingJob === (job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`)}
+                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
+                                savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`)
+                                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                              }`}
+                              title={savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
+                            >
+                              {savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`) ? (
+                                <BookmarkCheck size={16} />
+                              ) : (
+                                <BookmarkPlus size={16} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {linkedinSearchDone && linkedinJobs.length === 0 && !loadingLinkedin && (
+                    <div className="text-center py-6 bg-white/60 rounded-xl border border-slate-200">
+                      <p className="text-sm text-slate-500">No LinkedIn jobs found. Try different keywords or a wider time range.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Weaknesses & Suggestions */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                 {/* Weaknesses */}
@@ -606,8 +1475,11 @@ const UploadResume = () => {
                               {job.matchScore || job.match_score || 0}% Match
                             </span>
                             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                              (job.source || job.platform || '').toLowerCase() === 'indeed' ? 'bg-blue-100 text-blue-700' :
-                              (job.source || job.platform || '').toLowerCase() === 'rozee' ? 'bg-green-100 text-green-700' :
+                              (job.source || job.platform || '').toLowerCase() === 'indeed' ? 'bg-indigo-100 text-indigo-700' :
+                              (job.source || job.platform || '').toLowerCase() === 'remotive' ? 'bg-blue-100 text-blue-700' :
+                              (job.source || job.platform || '').toLowerCase() === 'jobicy' ? 'bg-purple-100 text-purple-700' :
+                              (job.source || job.platform || '').toLowerCase() === 'arbeitnow' ? 'bg-teal-100 text-teal-700' :
+                              (job.source || job.platform || '').toLowerCase() === 'usajobs' ? 'bg-red-100 text-red-700' :
                               'bg-slate-100 text-slate-700'
                             }`}>
                               {(job.source || job.platform || 'Job Site').charAt(0).toUpperCase() + (job.source || job.platform || 'Job Site').slice(1)}
@@ -641,6 +1513,22 @@ const UploadResume = () => {
                               Apply Now →
                             </a>
                           )}
+                          <button
+                            onClick={() => handleSaveJob(job, job.source || job.platform || "Job Site")}
+                            disabled={savingJob === (job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`)}
+                            className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
+                              savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`)
+                                ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                            }`}
+                            title={savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
+                          >
+                            {savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`) ? (
+                              <BookmarkCheck size={16} />
+                            ) : (
+                              <BookmarkPlus size={16} />
+                            )}
+                          </button>
                         </div>
                       </div>
                     ))}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   Brain,
   Mail,
@@ -7,7 +7,7 @@ import {
   Briefcase,
   UserPlus,
   AlertCircle,
-  Chrome,
+  Globe,
 } from "lucide-react";
 
 const SignUp = () => {
@@ -18,7 +18,7 @@ const SignUp = () => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const submit = async (e) => {
+  const submit = async (e: any) => {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -247,7 +247,7 @@ const SignUp = () => {
             onClick={handleGoogleSignup}
             className="w-full bg-white border-2 border-slate-300 hover:border-slate-400 text-slate-700 font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-3 hover:bg-slate-50"
           >
-            <Chrome size={20} className="text-slate-600" />
+            <Globe size={20} className="text-slate-600" />
             Sign up with Google
           </button>
 

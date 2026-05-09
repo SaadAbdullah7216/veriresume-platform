@@ -11,8 +11,22 @@ import {
   TrendingUp,
   Activity,
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
 
 const API_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+const COLORS = ["#06b6d4", "#3b82f6", "#8b5cf6", "#f59e0b"];
 
 interface AIUsageData {
   totalAnalyzed: number;
@@ -26,6 +40,8 @@ interface AIUsageData {
     high: number;
     excellent: number;
   };
+  anomalyTrends: { month: string; total: number; flagged: number; cleared: number }[];
+  usageBreakdown: { name: string; value: number }[];
 }
 
 const AdminAnalytics = () => {
@@ -143,6 +159,79 @@ const AdminAnalytics = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* Anomaly Trends + Usage Breakdown */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Anomaly Trends Chart */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+                <Activity size={20} className="text-red-500" />
+                Anomaly Trends (Last 6 Months)
+              </h3>
+              {data.anomalyTrends && data.anomalyTrends.length > 0 ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={data.anomalyTrends}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="month" stroke="#64748b" />
+                    <YAxis stroke="#64748b" allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="flagged" name="Flagged" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="cleared" name="Cleared" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-[280px] text-slate-400">
+                  No anomaly trend data yet
+                </div>
+              )}
+            </div>
+
+            {/* AI Usage Breakdown */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+                <Brain size={20} className="text-cyan-600" />
+                AI Usage Breakdown
+              </h3>
+              {data.usageBreakdown && data.usageBreakdown.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={data.usageBreakdown}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {data.usageBreakdown.map((_: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-4 space-y-2">
+                    {data.usageBreakdown.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[idx] }}></div>
+                          <span className="text-slate-600">{item.name}</span>
+                        </div>
+                        <span className="font-bold text-slate-900">{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-[200px] text-slate-400">
+                  No usage data yet
+                </div>
+              )}
             </div>
           </div>
         </div>

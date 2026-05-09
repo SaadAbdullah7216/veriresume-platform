@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../../context/AuthContext";
+// useAuth import removed
 import axios from "axios";
 import {
   Briefcase,
@@ -8,7 +8,6 @@ import {
   MapPin,
   DollarSign,
   Clock,
-  Bookmark,
   ExternalLink,
   Filter,
   Search,
@@ -16,11 +15,8 @@ import {
   Building,
   Users,
   Star,
-  Zap,
   Loader,
-  AlertCircle,
   Heart,
-  Share2,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -49,9 +45,7 @@ const JobRecommendations = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [sortBy, setSortBy] = useState("match");
-  const [error, setError] = useState("");
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   useEffect(() => {
     fetchJobs();
@@ -70,7 +64,7 @@ const JobRecommendations = () => {
       setJobs(response.data);
       setLoading(false);
     } catch (err: any) {
-      setError(err.response?.data?.message || "Failed to load jobs");
+      console.error(err.response?.data?.message || "Failed to load jobs");
       setLoading(false);
     }
   };
