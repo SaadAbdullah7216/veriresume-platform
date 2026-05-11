@@ -29,29 +29,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 connectDB();
 
-// Seed admin on server start
-const seedAdmin = async () => {
-  try {
-    const adminEmail = "saadabdullah7216@gmail.com";
-    const exists = await User.findOne({ email: adminEmail });
-    if (!exists) {
-      await User.create({
-        name: "Demo Admin",
-        email: adminEmail,
-        password: "admin123",
-        role: "admin",
-        isEmailVerified: true,
-      });
-      console.log("✅ Demo admin created:", adminEmail);
-    } else {
-      console.log("✅ Demo admin already exists:", adminEmail);
-    }
-  } catch (err) {
-    console.error("Error seeding admin:", err);
-  }
-};
 
-seedAdmin();
 
 app.use(
   session({
