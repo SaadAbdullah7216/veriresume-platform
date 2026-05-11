@@ -774,7 +774,6 @@ const UploadResume = () => {
       console.log("⚠️ All APIs failed — generating client-side direct search links");
       const searchQuery = titles[0] || query;
       const loc = unifiedLocation || "";
-      const encodedQ = encodeURIComponent(searchQuery);
       const encodedLoc = encodeURIComponent(loc || "Remote");
 
       const companies = [
