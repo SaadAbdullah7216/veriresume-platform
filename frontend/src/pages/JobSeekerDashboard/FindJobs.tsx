@@ -368,7 +368,7 @@ const FindJobs = () => {
             type: job.type,
             salary: job.salary,
             description: job.description?.substring(0, 500),
-            applyUrl: job.applyUrl,
+            applyUrl: job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || "",
             logo: job.logo,
             source: job.source || "JSearch",
             postedDate: job.postedDate,

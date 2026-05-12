@@ -198,7 +198,7 @@ const UploadResume = () => {
             type: job.type || job.job_type || "",
             salary: job.salary || "",
             description: (job.description || "").substring(0, 500),
-            applyUrl: job.applyUrl || job.url || "",
+            applyUrl: job.applyUrl || job.job_apply_link || job.url || job.link || "",
             logo: job.logo || job.company_logo || "",
             source,
             postedDate: job.postedDate || job.posted_date || "",

@@ -105,9 +105,5 @@ export const generateJson = async ({ prompt, providerOrder }) => {
     }
   }
 
-  if (lastError) {
-    throw lastError;
-  }
-
-  return null;
+  throw lastError || new Error('All AI providers returned no result. Please check your GROQ_API_KEY and GEMINI_API_KEY environment variables.');
 };
