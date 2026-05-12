@@ -62,6 +62,8 @@ interface Job {
   matchedSkills?: string[];
   missingSkills?: string[];
   url?: string;
+  applyUrl?: string;
+  job_apply_link?: string;
 }
 
 const JobSeekerJobs = () => {
@@ -81,7 +83,9 @@ const JobSeekerJobs = () => {
   const [loading, setLoading] = useState(true);
   const [externalLoading, setExternalLoading] = useState(false);
   const [error, setError] = useState("");
-  const [savedJobs, setSavedJobs] = useState<string[]>([]);
+  // savedJobMap: jobId → saved document _id in DB
+  const [savedJobMap, setSavedJobMap] = useState<Record<string, string>>({});
+  const [savingJob, setSavingJob] = useState<string | null>(null);
 
   // Search & filter state
   const [searchTerm, setSearchTerm] = useState("");
@@ -98,6 +102,7 @@ const JobSeekerJobs = () => {
 
   useEffect(() => {
     fetchResumeAndJobs();
+    fetchSavedJobIds(); // Load persisted saved jobs on mount
   }, []);
 
   useEffect(() => {
@@ -113,7 +118,7 @@ const JobSeekerJobs = () => {
     };
 
     const mapped = externalJobs
-      .filter((ej: any) => isValidJobUrl(ej.url)) // drop jobs with invalid/broken URLs
+      .filter((ej: any) => isValidJobUrl(ej.url || ej.applyUrl || ej.job_apply_link)) // drop jobs with no valid URL
       .map((ej: any, idx: number) => ({
         _id: ej.id || `ext-${idx}-${Date.now()}`,
         title: ej.title || "Untitled",
@@ -133,7 +138,10 @@ const JobSeekerJobs = () => {
         matchScore: ej.matchScore || 0,
         matchedSkills: ej.matchedSkills || [],
         missingSkills: ej.missingSkills || [],
-        url: ej.url || "#",
+        // Capture all possible URL fields so apply & save both work
+        url: ej.url || ej.applyUrl || ej.job_apply_link || ej.link || "#",
+        applyUrl: ej.applyUrl || ej.url || ej.job_apply_link || ej.link || "#",
+        job_apply_link: ej.job_apply_link || "",
       }));
 
     const merged: Job[] = [...portalJobs, ...mapped];
@@ -145,8 +153,27 @@ const JobSeekerJobs = () => {
   }, [allJobs, searchTerm, typeFilter, sourceFilter, sortBy, minMatchFilter]);
 
   // ═══════════════════════════════════════════════
-  // Fetch resume data + HR-posted jobs + external jobs
+  // Fetch saved job IDs from DB (persists across sessions)
   // ═══════════════════════════════════════════════
+  const fetchSavedJobIds = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const response = await axios.get(`${API_URL}/api/jobseeker/saved-jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.data.success) {
+        const map: Record<string, string> = {};
+        (response.data.data || []).forEach((saved: any) => {
+          if (saved.jobId) map[saved.jobId] = saved._id;
+        });
+        setSavedJobMap(map);
+      }
+    } catch (err: any) {
+      console.warn("Could not load saved jobs:", err.message);
+    }
+  };
+
   const fetchResumeAndJobs = async () => {
     try {
       setLoading(true);
@@ -427,10 +454,56 @@ const JobSeekerJobs = () => {
     setFilteredJobs(filtered);
   };
 
-  const toggleSaveJob = (jobId: string) => {
-    setSavedJobs((prev) =>
-      prev.includes(jobId) ? prev.filter((id) => id !== jobId) : [...prev, jobId]
-    );
+  // ═══════════════════════════════════════════════
+  // Save / unsave a job (persists to DB)
+  // ═══════════════════════════════════════════════
+  const handleSaveJob = async (job: Job) => {
+    const jobId = job._id;
+    const token = localStorage.getItem("token");
+    setSavingJob(jobId);
+    try {
+      const existingDocId = savedJobMap[jobId];
+      if (existingDocId) {
+        // Already saved → unsave
+        await axios.delete(`${API_URL}/api/jobseeker/saved-jobs/${existingDocId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setSavedJobMap((prev) => {
+          const next = { ...prev };
+          delete next[jobId];
+          return next;
+        });
+      } else {
+        // Not saved → save
+        const applyLink =
+          job.applyUrl || job.job_apply_link || job.url || "#";
+        const response = await axios.post(
+          `${API_URL}/api/jobseeker/saved-jobs`,
+          {
+            jobId,
+            title: job.title,
+            company: job.company || "Unknown",
+            location: job.location || "",
+            type: job.type || "Full-time",
+            salary: job.salary || "Not specified",
+            description: (job.description || "").substring(0, 500),
+            applyUrl: applyLink,
+            logo: job.companyLogoUrl || null,
+            source: job.source || "External",
+            postedDate: job.postedDate || "",
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const savedDocId = response.data?.data?._id;
+        if (savedDocId) {
+          setSavedJobMap((prev) => ({ ...prev, [jobId]: savedDocId }));
+        }
+      }
+    } catch (err: any) {
+      console.error("Save job error:", err.response?.data?.error || err.message);
+    } finally {
+      setSavingJob(null);
+    }
   };
 
   // ═══════════════════════════════════════════════
@@ -456,12 +529,18 @@ const JobSeekerJobs = () => {
   };
 
   const handleApply = (job: Job) => {
-    // External jobs → open the direct URL
-    if (job.source && job.source !== "Portal" && job.url && job.url !== "#") {
-      window.open(job.url, "_blank", "noopener,noreferrer");
-    } else if (job.source === "Portal") {
-      // Portal jobs → apply via API
+    // Resolve the best available URL from all possible field names
+    const applyLink =
+      job.applyUrl || job.job_apply_link || job.url || "#";
+
+    if (job.source === "Portal") {
+      // Portal jobs → apply via API (registers application in DB)
       applyToPortalJob(job._id);
+    } else if (applyLink && applyLink !== "#") {
+      // External jobs → open the real job URL in new tab
+      window.open(applyLink, "_blank", "noopener,noreferrer");
+    } else {
+      console.warn("No apply link available for job:", job.title);
     }
   };
 
@@ -872,10 +951,14 @@ const JobSeekerJobs = () => {
                             </div>
                           )}
                           <button
-                            onClick={() => toggleSaveJob(jobId)}
+                            onClick={() => handleSaveJob(job)}
+                            disabled={savingJob === jobId}
                             className="p-2 hover:bg-slate-100 rounded-lg transition-all"
+                            title={savedJobMap[jobId] ? "Unsave job" : "Save job"}
                           >
-                            {savedJobs.includes(jobId) ? (
+                            {savingJob === jobId ? (
+                              <Loader className="animate-spin text-slate-400" size={18} />
+                            ) : savedJobMap[jobId] ? (
                               <BookmarkCheck className="text-cyan-600 fill-current" size={18} />
                             ) : (
                               <Bookmark className="text-slate-400" size={18} />
