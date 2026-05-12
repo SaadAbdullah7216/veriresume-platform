@@ -23,11 +23,16 @@ function getTransporter() {
     }
 
     transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false, // Use STARTTLS
       auth: {
         user: emailUser,
         pass: emailPass,
       },
+      tls: {
+        rejectUnauthorized: false // Helps in some cloud environments
+      }
     });
 
     console.log('✅ Email transporter initialized');
