@@ -85,8 +85,9 @@ const SavedJobs = () => {
   };
 
   const handleApply = (job: SavedJobItem) => {
-    if (job.applyUrl && job.applyUrl !== "#") {
-      window.open(job.applyUrl, "_blank", "noopener,noreferrer");
+    const applyLink = job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || (job as any).apply_url || "#";
+    if (applyLink && applyLink !== "#") {
+      window.open(applyLink, "_blank", "noopener,noreferrer");
     }
   };
 

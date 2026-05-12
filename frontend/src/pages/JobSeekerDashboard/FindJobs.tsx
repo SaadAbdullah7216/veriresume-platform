@@ -201,8 +201,17 @@ const FindJobs = () => {
 
       // Collect JSearch results
       if (jsearchRes.status === "fulfilled" && jsearchRes.value.data.success) {
-        const jsJobs = (jsearchRes.value.data.data.jobs || []).map((j: any) => ({ ...j, source: "JSearch" }));
+        const jsJobs = (jsearchRes.value.data.data.jobs || []).map((j: any) => ({
+          ...j,
+          id: j.job_id || j.id || `js-${btoa((j.job_title || j.title || "") + (j.employer_name || j.company || "")).substring(0, 15)}`,
+          title: j.job_title || j.title || "Untitled",
+          company: j.employer_name || j.company || "Unknown",
+          location: j.job_city ? `${j.job_city}, ${j.job_country}` : j.location || "Remote",
+          applyUrl: j.job_apply_link || j.applyUrl || j.url || j.link || "#",
+          source: "JSearch",
+        }));
         allJobs.push(...jsJobs);
+        console.log(`✅ JSearch: ${jsJobs.length} jobs`);
       } else {
         primaryFailed = true;
       }
@@ -211,9 +220,15 @@ const FindJobs = () => {
       if (glassdoorRes.status === "fulfilled" && glassdoorRes.value.data.success) {
         const gdJobs = (glassdoorRes.value.data.data.jobs || []).map((j: any) => ({
           ...j,
+          id: j.job_id || j.id || `gd-${btoa((j.job_title || j.title || "") + (j.employer_name || j.company || "")).substring(0, 15)}`,
+          title: j.job_title || j.title || "Untitled",
+          company: j.employer_name || j.company || "Unknown",
+          location: j.job_location || j.location || "Remote",
+          applyUrl: j.apply_url || j.job_url || j.applyUrl || j.url || j.link || "#",
           source: "Glassdoor",
         }));
         allJobs.push(...gdJobs);
+        console.log(`✅ Glassdoor: ${gdJobs.length} jobs`);
       } else {
         if (allJobs.length === 0) primaryFailed = true;
       }
@@ -368,7 +383,7 @@ const FindJobs = () => {
             type: job.type,
             salary: job.salary,
             description: job.description?.substring(0, 500),
-            applyUrl: job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || "",
+            applyUrl: job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || (job as any).apply_url || "",
             logo: job.logo,
             source: job.source || "JSearch",
             postedDate: job.postedDate,
@@ -385,7 +400,7 @@ const FindJobs = () => {
   };
 
   const handleApply = (job: JSearchJob) => {
-    const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || "#";
+    const applyLink = job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || (job as any).apply_url || "#";
     if (applyLink && applyLink !== "#") {
       window.open(applyLink, "_blank", "noopener,noreferrer");
     }

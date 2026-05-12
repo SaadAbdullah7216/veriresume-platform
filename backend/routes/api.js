@@ -4156,74 +4156,28 @@ CRITICAL RULES:
 
     let enhancedData = null;
     let providerUsed = null;
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const GROQ_API_KEY = process.env.GROQ_API_KEY;
+    const providers = [
+      (req.body.providerOrder && req.body.providerOrder.length > 0 ? req.body.providerOrder : null),
+      ['groq', 'gemini'],
+      ['gemini', 'groq']
+    ].filter(Boolean);
 
-    // Try Groq first (faster, reliable, no quota issues)
-    if (GROQ_API_KEY) {
-      try {
-        console.log('[ENHANCE] Trying Groq API...');
-        const groqResponse = await axios.post(
-          'https://api.groq.com/openai/v1/chat/completions',
-          {
-            model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.3,
-            max_tokens: 4000,
-            response_format: { type: 'json_object' }
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${GROQ_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 30000
-          }
-        );
-
-        const content = groqResponse.data.choices?.[0]?.message?.content;
-        if (content) {
-          enhancedData = JSON.parse(content);
-          providerUsed = 'groq';
-          console.log('[ENHANCE] Groq API success');
-        }
-      } catch (groqErr) {
-        console.warn('[ENHANCE] Groq API failed:', groqErr.message);
-      }
-    }
-
-    // Fallback to Gemini if Groq failed
-    if (!enhancedData && GEMINI_API_KEY) {
-      try {
-        console.log('[ENHANCE] Trying Gemini API as fallback...');
-        const geminiResponse = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-          {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 4000 }
-          },
-          { timeout: 45000 }
-        );
-
-        let content = geminiResponse.data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (content) {
-          content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-          const jsonStart = content.indexOf('{');
-          const jsonEnd = content.lastIndexOf('}');
-          if (jsonStart !== -1 && jsonEnd !== -1) {
-            content = content.substring(jsonStart, jsonEnd + 1);
-          }
-          enhancedData = JSON.parse(content);
-          providerUsed = 'gemini';
-          console.log('[ENHANCE] Gemini API success');
-        }
-      } catch (geminiErr) {
-        console.warn('[ENHANCE] Gemini API also failed:', geminiErr.message);
-      }
-    }
-
-    if (!enhancedData) {
-      return res.status(500).json({ success: false, error: 'AI enhancement service unavailable. Please check API keys and try again.' });
+    let aiResponse = null;
+    try {
+      aiResponse = await generateWithValidation({ 
+        prompt, 
+        orders: providers, 
+        validate: (data) => data.enhancedName && data.enhancedSummary && data.enhancedExperience 
+      });
+      enhancedData = aiResponse.result;
+      providerUsed = aiResponse.provider;
+      console.log(`[ENHANCE] Successfully enhanced resume using ${providerUsed}`);
+    } catch (aiErr) {
+      console.error('[ENHANCE] AI enhancement failed:', aiErr.message);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI enhancement service currently unavailable. Please try again in a few minutes or check your API keys.' 
+      });
     }
 
     // Ensure all fields exist with sane defaults

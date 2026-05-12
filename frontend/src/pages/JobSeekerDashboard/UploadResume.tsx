@@ -98,9 +98,6 @@ const UploadResume = () => {
   const [selectedJobTitles, setSelectedJobTitles] = useState<string[]>([]);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
-  // ── Save Job State ──
-  const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
-  const [savingJob, setSavingJob] = useState<string | null>(null);
   const [isPremiumError, setIsPremiumError] = useState(false);
 
   const navigate = useNavigate();
@@ -154,64 +151,93 @@ const UploadResume = () => {
     }
   }, [uploadSuccess, resumeId, analysisData, deepAnalysis, resumeSkills, matchingJobs, unifiedJobs, analysisPending]);
 
-  // Fetch saved job IDs on mount
+  // ═══════════════════════════════════════════════
+  // Fetch saved job IDs from DB (persists across sessions)
+  // ═══════════════════════════════════════════════
+  const [savedJobMap, setSavedJobMap] = useState<Record<string, string>>({});
+  const [savingJob, setSavingJob] = useState<string | null>(null);
+
   React.useEffect(() => {
-    const fetchSavedJobs = async () => {
+    const fetchSavedJobIds = async () => {
       try {
         const token = localStorage.getItem("token");
+        if (!token) return;
         const response = await axios.get(`${API_URL}/api/jobseeker/saved-jobs`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.data.success) {
-          const ids = new Set<string>(response.data.data.map((j: any) => j.jobId));
-          setSavedJobIds(ids);
+          const map: Record<string, string> = {};
+          (response.data.data || []).forEach((saved: any) => {
+            if (saved.jobId) map[saved.jobId] = saved._id;
+          });
+          setSavedJobMap(map);
         }
-      } catch { /* ignore */ }
+      } catch (err: any) {
+        console.warn("Could not load saved jobs:", err.message);
+      }
     };
-    if (user) fetchSavedJobs();
+    if (user) fetchSavedJobIds();
   }, [user]);
 
-  const handleSaveJob = async (job: any, source: string) => {
-    const stableId = job.id || `ext-${btoa((job.title || "") + (job.company || "")).substring(0, 15)}-0`;
-    const jobId = stableId;
+  // ═══════════════════════════════════════════════
+  // Save / unsave a job (persists to DB)
+  // ═══════════════════════════════════════════════
+  const handleSaveJob = async (job: any) => {
+    // Generate stable ID if missing
+    const jobId = job.id || job._id || `ext-${btoa((job.title || "") + (job.company || "")).substring(0, 15)}`;
     const token = localStorage.getItem("token");
     setSavingJob(jobId);
     try {
-      if (savedJobIds.has(jobId)) {
-        const response = await axios.get(`${API_URL}/api/jobseeker/saved-jobs`, {
+      const existingDocId = savedJobMap[jobId];
+      if (existingDocId) {
+        // Already saved → unsave
+        await axios.delete(`${API_URL}/api/jobseeker/saved-jobs/${existingDocId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const savedJob = response.data.data?.find((s: any) => s.jobId === jobId);
-        if (savedJob) {
-          await axios.delete(`${API_URL}/api/jobseeker/saved-jobs/${savedJob._id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          setSavedJobIds((prev) => { const next = new Set(prev); next.delete(jobId); return next; });
-        }
+        setSavedJobMap((prev) => {
+          const next = { ...prev };
+          delete next[jobId];
+          return next;
+        });
       } else {
-        await axios.post(
+        // Not saved → save
+        const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || (job as any).apply_url || "#";
+        const response = await axios.post(
           `${API_URL}/api/jobseeker/saved-jobs`,
           {
             jobId,
             title: job.title,
-            company: job.company,
-            location: job.location,
-            type: job.type || job.job_type || "",
-            salary: job.salary || "",
+            company: job.company || "Unknown",
+            location: job.location || "",
+            type: job.type || job.job_type || "Full-time",
+            salary: job.salary || "Not specified",
             description: (job.description || "").substring(0, 500),
-            applyUrl: job.applyUrl || job.job_apply_link || job.url || job.link || "",
-            logo: job.logo || job.company_logo || "",
-            source,
+            applyUrl: applyLink,
+            logo: job.logo || job.companyLogoUrl || null,
+            source: job.source || "External",
             postedDate: job.postedDate || job.posted_date || "",
           },
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        setSavedJobIds((prev) => new Set(prev).add(jobId));
+        const savedDocId = response.data?.data?._id;
+        if (savedDocId) {
+          setSavedJobMap((prev) => ({ ...prev, [jobId]: savedDocId }));
+        }
       }
     } catch (err: any) {
-      console.error("Save job error:", err);
+      console.error("Save job error:", err.message);
     } finally {
       setSavingJob(null);
+    }
+  };
+
+  const handleApplyJob = (job: any) => {
+    // Resolve the best available URL from all possible field names
+    const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || (job as any).apply_url || "#";
+    if (applyLink && applyLink !== "#") {
+      window.open(applyLink, "_blank", "noopener,noreferrer");
+    } else {
+      console.warn("No apply link available for job:", job.title);
     }
   };
 
@@ -557,7 +583,15 @@ const UploadResume = () => {
 
     // Collect JSearch results (same parsing as FindJobs)
     if (jsearchRes.status === "fulfilled" && jsearchRes.value.data.success) {
-      const jsJobs = (jsearchRes.value.data.data.jobs || []).map((j: any) => ({ ...j, source: "JSearch" }));
+      const jsJobs = (jsearchRes.value.data.data.jobs || []).map((j: any) => ({
+        ...j,
+        id: j.job_id || j.id || `js-${btoa((j.job_title || j.title || "") + (j.employer_name || j.company || "")).substring(0, 15)}`,
+        title: j.job_title || j.title || "Untitled",
+        company: j.employer_name || j.company || "Unknown",
+        location: j.job_city ? `${j.job_city}, ${j.job_country}` : j.location || "Remote",
+        applyUrl: j.job_apply_link || j.applyUrl || j.url || j.link || "#",
+        source: "JSearch",
+      }));
       allJobs.push(...jsJobs);
       console.log(`✅ JSearch: ${jsJobs.length} jobs`);
     } else {
@@ -567,7 +601,15 @@ const UploadResume = () => {
 
     // Collect Glassdoor results
     if (glassdoorRes.status === "fulfilled" && glassdoorRes.value.data.success) {
-      const gdJobs = (glassdoorRes.value.data.data.jobs || []).map((j: any) => ({ ...j, source: "Glassdoor" }));
+      const gdJobs = (glassdoorRes.value.data.data.jobs || []).map((j: any) => ({
+        ...j,
+        id: j.job_id || j.id || `gd-${btoa((j.job_title || j.title || "") + (j.employer_name || j.company || "")).substring(0, 15)}`,
+        title: j.job_title || j.title || "Untitled",
+        company: j.employer_name || j.company || "Unknown",
+        location: j.job_location || j.location || "Remote",
+        applyUrl: j.apply_url || j.job_url || j.applyUrl || j.url || j.link || "#",
+        source: "Glassdoor",
+      }));
       allJobs.push(...gdJobs);
       console.log(`✅ Glassdoor: ${gdJobs.length} jobs`);
     } else {
@@ -645,7 +687,7 @@ const UploadResume = () => {
             type: j.job_type || "Full-time",
             description: j.description || "",
             salary: j.salary || "Not specified",
-            applyUrl: j.url || j.applyUrl || j.job_apply_link || j.link || "#",
+            applyUrl: j.url || j.applyUrl || j.job_apply_link || j.link || j.apply_url || "#",
             logo: null,
             postedDate: j.posted_date || "",
             source: j.source || "Free API",
@@ -796,13 +838,6 @@ const UploadResume = () => {
       .replace(/&gt;/g, ">")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
-  };
-
-  const handleApplyJob = (job: any) => {
-    const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || "#";
-    if (applyLink && applyLink !== "#") {
-      window.open(applyLink, "_blank", "noopener,noreferrer");
-    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -1553,10 +1588,27 @@ const UploadResume = () => {
                                 Apply Now
                               </button>
                               <button
-                                onClick={() => navigate(`/jobseeker/job/${encodeURIComponent(jobId)}`)}
-                                className="px-4 py-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-700 hover:border-cyan-300 hover:bg-cyan-50 transition-all text-sm"
+                                onClick={() => handleSaveJob(job)}
+                                disabled={savingJob === jobId}
+                                className={`px-4 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 text-sm border ${
+                                  savedJobMap[jobId] 
+                                    ? "bg-cyan-50 border-cyan-200 text-cyan-700" 
+                                    : "bg-white border-slate-300 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50"
+                                }`}
                               >
-                                Full Page
+                                {savingJob === jobId ? (
+                                  <Loader className="animate-spin" size={16} />
+                                ) : savedJobMap[jobId] ? (
+                                  <>
+                                    <BookmarkCheck size={16} className="fill-current" />
+                                    Saved
+                                  </>
+                                ) : (
+                                  <>
+                                    <Bookmark size={16} />
+                                    Save
+                                  </>
+                                )}
                               </button>
                             </div>
                           </div>
