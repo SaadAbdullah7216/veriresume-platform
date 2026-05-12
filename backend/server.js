@@ -18,9 +18,21 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Environment Variable Validation
+const requiredEnv = ["MONGO_URI", "JWT_SECRET"];
+const missingEnv = requiredEnv.filter((key) => !process.env[key]);
+if (missingEnv.length > 0) {
+  console.error(`\n❌ CRITICAL ERROR: Missing required environment variables: ${missingEnv.join(", ")}`);
+  console.error("Please add these to your Railway dashboard Variables section.\n");
+}
+
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(",").map((o) => o.trim())
   : ["http://localhost:5173", "https://veriresume-platform.vercel.app"];
+
+if (!process.env.FRONTEND_URL) {
+  console.warn("⚠️ FRONTEND_URL not set. Defaulting to development origins.");
+}
 
 app.use(
   cors({

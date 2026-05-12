@@ -9,7 +9,17 @@ function getTransporter() {
     const emailPass = process.env.EMAIL_PASS;
 
     if (!emailUser || !emailPass) {
-      throw new Error('Email credentials not configured. Please set EMAIL_USER and EMAIL_PASS in .env file');
+      console.warn('⚠️ Email credentials not configured. Email features (OTP) will fail.');
+      return {
+        sendMail: async (options) => {
+          console.log('--- MOCK EMAIL ---');
+          console.log(`To: ${options.to}`);
+          console.log(`Subject: ${options.subject}`);
+          console.log(`OTP: ${options.html.match(/\d{6}/)?.[0] || 'N/A'}`);
+          console.log('------------------');
+          return { messageId: 'mock-id' };
+        }
+      };
     }
 
     transporter = nodemailer.createTransport({
