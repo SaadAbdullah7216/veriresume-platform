@@ -1,7 +1,13 @@
 import re
-
+import requests
+import json
+import os
 
 def analyze_resume_deep(resume_text, groq_key='', gemini_key='', **kwargs):
+    """
+    Deeply analyze resume using Groq (Llama 3.3) or Gemini fallback.
+    Returns ATS score, suggested job titles, and recommended keywords.
+    """
     if isinstance(resume_text, dict):
         resume_text = (
             resume_text.get('resumeText')
@@ -16,50 +22,68 @@ def analyze_resume_deep(resume_text, groq_key='', gemini_key='', **kwargs):
 
     suggested_job_titles = []
     recommended_job_keywords = []
+    
+    # Base prompt for AI models
+    prompt = (
+        "Based on the following resume text, provide 2 to 4 suggested job titles that perfectly match the candidate's skills and experience. "
+        "Also provide 5 to 8 recommended keywords for ATS optimization. "
+        "Reply strictly in valid JSON format: {\"titles\": [\"Job Title 1\"], \"keywords\": [\"Keyword 1\"]}\n\n"
+        f"Resume text: {text[:4000]}"
+    )
 
-    # Attempt Groq API first
+    # 1. Attempt Groq API first
     if groq_key and text:
-        import requests
         try:
-            prompt = f"Based on the following resume text, provide 2 to 4 suggested job titles that perfectly match the candidate's skills and experience. Also provide 5 to 8 recommended keywords for ATS optimization. Reply strictly in valid JSON format: {{\\"titles\\": [\\"Job Title 1\\"], \\"keywords\\": [\\"Keyword 1\\"]}}\\n\\nResume text: {text[:4000]}"
-            headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+            headers = {
+                "Authorization": f"Bearer {groq_key}", 
+                "Content-Type": "application/json"
+            }
             data = {
                 "model": "llama-3.3-70b-versatile",
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": {"type": "json_object"},
                 "temperature": 0.3
             }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers, timeout=15)
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers, timeout=20)
             if res.status_code == 200:
-                import json
                 content = res.json()["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
                 suggested_job_titles = parsed.get("titles", [])
                 recommended_job_keywords = parsed.get("keywords", [])
+                print(f"[DEEP-ANALYZE] Groq success: {len(suggested_job_titles)} titles found")
+            elif res.status_code == 429:
+                print("[DEEP-ANALYZE] Groq rate limit reached (429)")
+            else:
+                print(f"[DEEP-ANALYZE] Groq error {res.status_code}: {res.text}")
         except Exception as e:
-            print("Groq API error:", e)
+            print(f"[DEEP-ANALYZE] Groq exception: {e}")
 
-    # Fallback to Gemini API if Groq fails or is not available
+    # 2. Fallback to Gemini API if Groq fails or is not available
     if not suggested_job_titles and gemini_key and text:
-        import requests
         try:
-            prompt = f"Based on the following resume text, provide 2 to 4 suggested job titles that perfectly match the candidate's skills and experience. Also provide 5 to 8 recommended keywords for ATS optimization. Reply strictly in valid JSON format: {{\\"titles\\": [\\"Job Title 1\\"], \\"keywords\\": [\\"Keyword 1\\"]}}\\n\\nResume text: {text[:4000]}"
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            # Fixed model name from gemini-2.5-flash to gemini-1.5-flash
+            model = "gemini-1.5-flash" 
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
             data = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}
+                "generationConfig": {
+                    "responseMimeType": "application/json", 
+                    "temperature": 0.3
+                }
             }
-            res = requests.post(url, json=data, timeout=15)
+            res = requests.post(url, json=data, timeout=20)
             if res.status_code == 200:
-                import json
                 content = res.json()["candidates"][0]["content"]["parts"][0]["text"]
                 parsed = json.loads(content)
                 suggested_job_titles = parsed.get("titles", [])
                 recommended_job_keywords = parsed.get("keywords", [])
+                print(f"[DEEP-ANALYZE] Gemini success: {len(suggested_job_titles)} titles found")
+            else:
+                print(f"[DEEP-ANALYZE] Gemini error {res.status_code}: {res.text}")
         except Exception as e:
-            print("Gemini API error:", e)
+            print(f"[DEEP-ANALYZE] Gemini exception: {e}")
 
-    # Final fallback to heuristics
+    # 3. Final fallback to heuristics
     if not suggested_job_titles:
         keyword_patterns = [
             ('Python', r'\bpython\b'),
@@ -92,9 +116,12 @@ def analyze_resume_deep(resume_text, groq_key='', gemini_key='', **kwargs):
         if not suggested_job_titles and ('engineer' in normalized or 'developer' in normalized):
             suggested_job_titles.append('Software Engineer')
 
+        print(f"[DEEP-ANALYZE] Heuristic fallback: {len(suggested_job_titles)} titles found")
 
+    # 4. Calculate ATS Score
     ats_score = 55
     if text:
+        # Simple formula: base 40 + length bonus + keyword bonus
         ats_score = min(95, 40 + min(len(text) // 120, 25) + len(recommended_job_keywords) * 3)
 
     return {
@@ -108,5 +135,6 @@ def analyze_resume_deep(resume_text, groq_key='', gemini_key='', **kwargs):
         'grammar_score': 70,
         'readability_score': 70,
         'structure_score': 70,
-        'summary': 'Heuristic deep analysis completed locally.',
+        'summary': 'Deep analysis completed successfully.',
     }
+

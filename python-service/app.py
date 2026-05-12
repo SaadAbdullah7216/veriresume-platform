@@ -119,7 +119,9 @@ try:
     from modules.deep_ai_analyzer import analyze_resume_deep
     print("[OK] Deep AI Analyzer (Groq + Gemini) loaded")
 except Exception as e:
-    print(f"[WARNING] Deep AI Analyzer import failed: {e}")
+    import traceback
+    print(f"[ERROR] Deep AI Analyzer import failed: {e}")
+    traceback.print_exc()
     analyze_resume_deep = None
 
 # Import Fast HTTP Job Scraper (fallback for local scraping)
