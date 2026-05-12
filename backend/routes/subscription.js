@@ -111,23 +111,23 @@ router.post("/verify-session", authMiddleware, async (req, res) => {
         plan: "Premium",
         amount,
         paymentStatus: "Paid",
-        validFrom: new Date(stripeSub.current_period_start * 1000),
-        validUntil: new Date(stripeSub.current_period_end * 1000),
+        validFrom: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000) : new Date(),
+        validUntil: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         stripeCustomerId: session.customer,
         stripeSubscriptionId: stripeSub.id,
         stripePriceId: priceId,
         stripeSessionId: session.id,
         interval,
         status: "active",
-        currentPeriodStart: new Date(stripeSub.current_period_start * 1000),
-        currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+        currentPeriodStart: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000) : new Date(),
+        currentPeriodEnd: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       });
     }
 
     // Activate premium
     await User.findByIdAndUpdate(req.user._id, {
       isPremium: true,
-      premiumExpiresAt: new Date(stripeSub.current_period_end * 1000),
+      premiumExpiresAt: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       stripeCustomerId: session.customer,
     });
 
@@ -301,22 +301,22 @@ export async function stripeWebhookHandler(req, res) {
           plan: "Premium",
           amount,
           paymentStatus: "Paid",
-          validFrom: new Date(stripeSub.current_period_start * 1000),
-          validUntil: new Date(stripeSub.current_period_end * 1000),
+          validFrom: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000) : new Date(),
+          validUntil: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           stripeCustomerId,
           stripeSubscriptionId,
           stripePriceId: priceId,
           stripeSessionId: session.id,
           interval,
           status: "active",
-          currentPeriodStart: new Date(stripeSub.current_period_start * 1000),
-          currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+          currentPeriodStart: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000) : new Date(),
+          currentPeriodEnd: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         });
 
         // Update user premium status
         await User.findByIdAndUpdate(userId, {
           isPremium: true,
-          premiumExpiresAt: new Date(stripeSub.current_period_end * 1000),
+          premiumExpiresAt: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           stripeCustomerId,
         });
 
