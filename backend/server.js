@@ -20,17 +20,27 @@ const app = express();
 
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(",").map((o) => o.trim())
-  : ["http://localhost:5173"];
+  : ["http://localhost:5173", "https://veriresume-platform.vercel.app"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (curl, Postman, server-to-server)
+      // Allow requests with no origin (like mobile apps or curl)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS: origin ${origin} not allowed`));
+
+      // Check if origin is in allowed list or matches vercel.app
+      const isAllowed = allowedOrigins.includes(origin) || origin.endsWith(".vercel.app");
+
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        console.warn(`[CORS] Rejected origin: ${origin}`);
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+      }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
   })
 );
 
@@ -61,7 +71,19 @@ app.use("/auth", authRoutes);
 app.use("/api", apiRoutes);
 app.use("/api/subscription", subscriptionRoutes);
 
-app.get("/api", (req, res) => res.json({ message: "API is working!" }));
+// Root route for health check
+app.get("/", (req, res) => res.json({ message: "VeriResume API is working!", version: "1.0.0" }));
+
+// 404 Handler - logs the path to help debug deployment issues
+app.use((req, res) => {
+  console.warn(`[404] Route not found: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ 
+    success: false, 
+    error: "Route not found", 
+    path: req.originalUrl,
+    method: req.method
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
