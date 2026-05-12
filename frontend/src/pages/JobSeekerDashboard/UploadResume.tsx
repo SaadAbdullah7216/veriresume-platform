@@ -172,7 +172,8 @@ const UploadResume = () => {
   }, [user]);
 
   const handleSaveJob = async (job: any, source: string) => {
-    const jobId = job.id || job.url || job.applyUrl || `${source}-${job.title}-${job.company}`;
+    const stableId = job.id || `ext-${btoa((job.title || "") + (job.company || "")).substring(0, 15)}-0`;
+    const jobId = stableId;
     const token = localStorage.getItem("token");
     setSavingJob(jobId);
     try {
@@ -430,11 +431,12 @@ const UploadResume = () => {
         const rawJobs = response.data.data?.allMatchingJobs || response.data.data?.matchingJobs || [];
         // Filter out jobs with invalid/broken URLs
         const allJobs = rawJobs.filter((job: any) => {
-          if (!job.url || job.url === '#') return false;
+          const u = job.url || job.applyUrl || job.job_apply_link || job.link;
+          if (!u || u === '#') return false;
           try {
-            const u = new URL(job.url);
+            const parsed = new URL(u);
             // Reject bare domain roots (e.g. https://indeed.com or https://indeed.com/)
-            if (u.pathname === '/' && !u.search) return false;
+            if (parsed.pathname === '/' && !parsed.search) return false;
             return true;
           } catch { return false; }
         });

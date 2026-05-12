@@ -118,9 +118,12 @@ const JobSeekerJobs = () => {
     };
 
     const mapped = externalJobs
-      .filter((ej: any) => isValidJobUrl(ej.url || ej.applyUrl || ej.job_apply_link)) // drop jobs with no valid URL
-      .map((ej: any, idx: number) => ({
-        _id: ej.id || `ext-${idx}-${Date.now()}`,
+      .filter((ej: any) => isValidJobUrl(ej.url || ej.applyUrl || ej.job_apply_link || ej.link)) // drop jobs with no valid URL
+      .map((ej: any, idx: number) => {
+        // Create a stable fallback ID if missing, to prevent re-renders breaking the savedJobMap
+        const stableId = ej.id || `ext-${btoa((ej.title || "") + (ej.company || "")).substring(0, 15)}-${idx}`;
+        return {
+        _id: stableId,
         title: ej.title || "Untitled",
         company: ej.company || "Unknown Company",
         location: ej.location || "Remote",
@@ -138,11 +141,13 @@ const JobSeekerJobs = () => {
         matchScore: ej.matchScore || 0,
         matchedSkills: ej.matchedSkills || [],
         missingSkills: ej.missingSkills || [],
+        companyLogoUrl: ej.logo || ej.company_logo || "",
         // Capture all possible URL fields so apply & save both work
         url: ej.url || ej.applyUrl || ej.job_apply_link || ej.link || "#",
         applyUrl: ej.applyUrl || ej.url || ej.job_apply_link || ej.link || "#",
         job_apply_link: ej.job_apply_link || "",
-      }));
+      };
+      });
 
     const merged: Job[] = [...portalJobs, ...mapped];
     setAllJobs(merged);

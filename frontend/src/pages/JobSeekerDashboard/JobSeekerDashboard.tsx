@@ -87,7 +87,18 @@ const JobSeekerDashboard = () => {
       });
       const data = await response.json();
       if (data.success) {
-        const jobs = data.data?.allMatchingJobs || [];
+        const rawJobs = data.data?.allMatchingJobs || [];
+        // Filter out jobs with invalid/broken URLs
+        const jobs = rawJobs.filter((job: any) => {
+          const u = job.url || job.applyUrl || job.job_apply_link || job.link;
+          if (!u || u === '#') return false;
+          try {
+            const parsed = new URL(u);
+            if (parsed.pathname === '/' && !parsed.search) return false;
+            return true;
+          } catch { return false; }
+        });
+        
         setMatchingJobs(jobs);
         // Cache results
         localStorage.setItem('veriresume_cached_jobs', JSON.stringify(jobs));
