@@ -221,14 +221,14 @@ const FindJobs = () => {
       // Collect Indeed results
       if (indeedRes.status === "fulfilled" && indeedRes.value.data.success) {
         const indeedJobs: JSearchJob[] = (indeedRes.value.data.data.jobs || []).map((j: any) => ({
-          id: j.id || `indeed-${Date.now()}-${Math.random()}`,
+          id: j.id || `indeed-${btoa((j.title || "") + (j.company || "")).substring(0, 15)}`,
           title: j.title || "Untitled",
           company: j.company || "Unknown",
           location: j.location || "Remote",
           type: j.job_type || j.type || "Full-time",
           description: j.description || "",
           salary: j.salary || "Not specified",
-          applyUrl: j.url || j.applyUrl || "#",
+          applyUrl: j.url || j.applyUrl || j.job_apply_link || j.link || "#",
           logo: j.logo || null,
           postedDate: j.posted_date || j.postedDate || "",
           source: "Indeed",
@@ -244,14 +244,14 @@ const FindJobs = () => {
       // Collect LinkedIn results
       if (linkedinRes.status === "fulfilled" && linkedinRes.value.data.success) {
         const linkedinJobs: JSearchJob[] = (linkedinRes.value.data.data.jobs || []).map((j: any) => ({
-          id: j.id || `linkedin-${Date.now()}-${Math.random()}`,
+          id: j.id || `linkedin-${btoa((j.title || "") + (j.company || "")).substring(0, 15)}`,
           title: j.title || "Untitled",
           company: j.company || "Unknown",
           location: j.location || "Remote",
           type: j.job_type || j.type || "Full-time",
           description: j.description || j.full_description || "",
           salary: j.salary || "Not specified",
-          applyUrl: j.url || j.applyUrl || "#",
+          applyUrl: j.url || j.applyUrl || j.job_apply_link || j.link || "#",
           logo: j.logo || null,
           postedDate: j.posted_date || j.postedDate || "",
           source: "LinkedIn",
@@ -275,14 +275,14 @@ const FindJobs = () => {
           );
           if (freeRes.data.success) {
             const freeJobs: JSearchJob[] = (freeRes.data.data.jobs || []).map((j: any) => ({
-              id: j.id || `free-${Date.now()}-${Math.random()}`,
+              id: j.id || `free-${btoa((j.title || "") + (j.company || "")).substring(0, 15)}`,
               title: j.title || "Untitled",
               company: j.company || "Unknown",
               location: j.location || "Remote",
               type: j.job_type || "Full-time",
               description: j.description || "",
               salary: j.salary || "Not specified",
-              applyUrl: j.url || "#",
+              applyUrl: j.url || j.applyUrl || j.job_apply_link || j.link || "#",
               logo: null,
               postedDate: j.posted_date || "",
               source: j.source || "Free API",
