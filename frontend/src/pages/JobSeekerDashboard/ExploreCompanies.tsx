@@ -5,7 +5,6 @@ import axios from "axios";
 import {
   Building2,
   Search,
-  Mail,
   Briefcase,
   Users,
   Loader,
@@ -28,12 +27,29 @@ const API_URL =
   "http://localhost:3000";
 
 interface Company {
-  company: string;
-  recruiters: { name: string; email: string; _id: string }[];
+  companyKey: string;
+  companyName: string;
+  logoUrl?: string;
+  description?: string;
+  website?: string;
+  location?: string;
+  recruiters: { name: string; email: string; _id: string; avatar?: string }[];
   activeJobs: number;
   totalJobs: number;
-  email: string;
-  avatar?: string;
+}
+
+interface PortalJob {
+  _id: string;
+  title: string;
+  location: string;
+  description: string;
+  company: string;
+  companyLogoUrl?: string;
+  companyWebsite?: string;
+  companyLocation?: string;
+  postedDate?: string;
+  createdAt?: string;
+  type?: string;
 }
 
 interface JobListing {
@@ -68,6 +84,8 @@ const ExploreCompanies = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [sourceFilter, setSourceFilter] = useState<"all" | "portal" | "external">("all");
   const [expandedCompanies, setExpandedCompanies] = useState<Set<string>>(new Set());
+  const [portalJobs, setPortalJobs] = useState<Record<string, PortalJob[]>>({});
+  const [portalJobsLoading, setPortalJobsLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchAllCompanies();
@@ -93,8 +111,10 @@ const ExploreCompanies = () => {
           if (item.type === "portal") {
             const c = item.data as Company;
             return (
-              c.company.toLowerCase().includes(term) ||
-              c.email?.toLowerCase().includes(term) ||
+              c.companyName.toLowerCase().includes(term) ||
+              c.website?.toLowerCase().includes(term) ||
+              c.location?.toLowerCase().includes(term) ||
+              c.description?.toLowerCase().includes(term) ||
               c.recruiters.some((r) => r.name.toLowerCase().includes(term))
             );
           } else {
@@ -239,6 +259,42 @@ const ExploreCompanies = () => {
       );
     } catch (e) {
       return [];
+    }
+  };
+
+  const fetchPortalCompanyJobs = async (companyKey: string) => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    setPortalJobsLoading((prev) => ({ ...prev, [companyKey]: true }));
+    try {
+      const res = await axios.get(`${API_URL}/api/companies/${companyKey}/jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.data.success) {
+        setPortalJobs((prev) => ({ ...prev, [companyKey]: res.data.data || [] }));
+      }
+    } catch (err) {
+      console.warn("Failed to load company jobs:", err);
+    } finally {
+      setPortalJobsLoading((prev) => ({ ...prev, [companyKey]: false }));
+    }
+  };
+
+  const togglePortalJobs = async (companyKey: string) => {
+    const expandedKey = `portal-${companyKey}`;
+    setExpandedCompanies((prev) => {
+      const next = new Set(prev);
+      if (next.has(expandedKey)) {
+        next.delete(expandedKey);
+      } else {
+        next.add(expandedKey);
+      }
+      return next;
+    });
+
+    if (!portalJobs[companyKey]) {
+      await fetchPortalCompanyJobs(companyKey);
     }
   };
 
@@ -400,40 +456,63 @@ const ExploreCompanies = () => {
           {filteredCompanies.map((item, idx) => {
             if (item.type === "portal") {
               const company = item.data as Company;
+              const portalKey = `portal-${company.companyKey}`;
+              const isExpanded = expandedCompanies.has(portalKey);
+              const jobs = portalJobs[company.companyKey] || [];
+              const isLoadingJobs = portalJobsLoading[company.companyKey];
               return (
                 <div
-                  key={`portal-${idx}`}
+                  key={`portal-${company.companyKey}`}
                   className="bg-white rounded-2xl border border-slate-200 hover:border-cyan-300 hover:shadow-lg transition-all overflow-hidden"
                 >
                   <div className="p-6">
                     <div className="flex items-start gap-4">
                       {/* Company Avatar */}
-                      <div
-                        className={`w-14 h-14 bg-gradient-to-br ${
-                          portalColors[idx % portalColors.length]
-                        } rounded-xl flex items-center justify-center flex-shrink-0`}
-                      >
-                        <span className="text-white font-bold text-lg">{getCompanyInitials(company.company)}</span>
-                      </div>
+                      {company.logoUrl ? (
+                        <img
+                          src={company.logoUrl}
+                          alt={company.companyName}
+                          className="w-14 h-14 rounded-xl object-cover border border-slate-200 flex-shrink-0"
+                        />
+                      ) : (
+                        <div
+                          className={`w-14 h-14 bg-gradient-to-br ${
+                            portalColors[idx % portalColors.length]
+                          } rounded-xl flex items-center justify-center flex-shrink-0`}
+                        >
+                          <span className="text-white font-bold text-lg">{getCompanyInitials(company.companyName)}</span>
+                        </div>
+                      )}
                       {/* Company Info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-lg font-bold text-slate-900">{company.company}</h3>
+                          <h3 className="text-lg font-bold text-slate-900">{company.companyName}</h3>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-lg text-xs font-semibold border border-cyan-200">
                             <Star size={10} />
                             VeriResume
                           </span>
                         </div>
-                        <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
-                          <span className="flex items-center gap-1">
-                            <Mail size={12} className="text-slate-400" />
-                            {company.email}
-                          </span>
+                        <div className="flex items-center gap-3 text-sm text-slate-500 mt-1 flex-wrap">
                           <span className="flex items-center gap-1">
                             <Briefcase size={12} className="text-slate-400" />
                             {company.activeJobs} active / {company.totalJobs} total
                           </span>
+                          {company.location && (
+                            <span className="flex items-center gap-1">
+                              <MapPin size={12} className="text-slate-400" />
+                              {company.location}
+                            </span>
+                          )}
+                          {company.website && (
+                            <span className="flex items-center gap-1">
+                              <Globe size={12} className="text-slate-400" />
+                              {company.website}
+                            </span>
+                          )}
                         </div>
+                        {company.description && (
+                          <p className="text-sm text-slate-600 mt-2 line-clamp-2">{company.description}</p>
+                        )}
                         {/* Recruiters */}
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {company.recruiters.slice(0, 4).map((r, i) => (
@@ -454,15 +533,62 @@ const ExploreCompanies = () => {
                       </div>
                       {/* View Jobs */}
                       <button
-                        onClick={() => navigate("/jobseeker/jobs")}
+                        onClick={() => togglePortalJobs(company.companyKey)}
                         className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm flex-shrink-0"
                       >
                         <Briefcase size={14} />
-                        View Jobs
-                        <ChevronRight size={14} />
+                        {isExpanded ? "Hide Jobs" : "View Jobs"}
+                        {isExpanded ? <ChevronUp size={14} /> : <ChevronRight size={14} />}
                       </button>
                     </div>
                   </div>
+
+                  {isExpanded && (
+                    <div className="px-6 pb-6">
+                      <div className="border-t border-slate-100 pt-4">
+                        {isLoadingJobs ? (
+                          <div className="flex items-center gap-2 text-sm text-slate-500">
+                            <Loader className="animate-spin" size={16} />
+                            Loading jobs...
+                          </div>
+                        ) : jobs.length === 0 ? (
+                          <p className="text-sm text-slate-500">No active jobs listed for this company.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            {jobs.map((job) => (
+                              <div
+                                key={job._id}
+                                className="flex items-start justify-between gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200"
+                              >
+                                <div>
+                                  <p className="font-semibold text-slate-900">{job.title}</p>
+                                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
+                                    <span className="flex items-center gap-1">
+                                      <MapPin size={10} />
+                                      {job.location}
+                                    </span>
+                                    {job.type && (
+                                      <span className="flex items-center gap-1">
+                                        <Briefcase size={10} />
+                                        {job.type}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-sm text-slate-600 mt-2 line-clamp-2">{job.description}</p>
+                                </div>
+                                <button
+                                  onClick={() => navigate("/jobseeker/jobs")}
+                                  className="px-3 py-2 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-all"
+                                >
+                                  View Details
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             } else {

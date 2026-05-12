@@ -14,7 +14,15 @@ const UserSchema = new mongoose.Schema(
       enum: ["jobseeker", "hr", "admin"],
       default: "jobseeker",
     },
-    company: { type: String }, // For HR
+    company: { type: String }, // Legacy company name for HR
+    companyProfile: {
+      name: { type: String },
+      logoUrl: { type: String },
+      description: { type: String },
+      website: { type: String },
+      location: { type: String },
+      linkedin: { type: String },
+    },
     isEmailVerified: { type: Boolean, default: false },
 
     // OTPs

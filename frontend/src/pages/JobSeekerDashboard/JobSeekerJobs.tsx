@@ -42,6 +42,10 @@ interface Job {
   title: string;
   company: string;
   location: string;
+  companyLogoUrl?: string;
+  companyDescription?: string;
+  companyWebsite?: string;
+  companyLocation?: string;
   description: string;
   salary?: string;
   type?: string;
@@ -379,6 +383,7 @@ const JobSeekerJobs = () => {
           job.company?.toLowerCase().includes(term) ||
           job.location?.toLowerCase().includes(term) ||
           job.description?.toLowerCase().includes(term) ||
+          job.companyDescription?.toLowerCase().includes(term) ||
           job.requirements?.some((r) => r.toLowerCase().includes(term)) ||
           job.skillsRequired?.some((s) => s.toLowerCase().includes(term))
       );
@@ -807,6 +812,13 @@ const JobSeekerJobs = () => {
                       <div className="flex items-start justify-between gap-4 mb-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            {job.companyLogoUrl && (
+                              <img
+                                src={job.companyLogoUrl}
+                                alt={job.company}
+                                className="w-8 h-8 rounded-lg object-cover border border-slate-200"
+                              />
+                            )}
                             <h3 className="text-lg font-bold text-slate-900">{job.title}</h3>
                             <span
                               className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${badge.color}`}

@@ -118,6 +118,14 @@ const ScoreGauge = ({ score, label, size = 100 }: { score: number; label: string
   );
 };
 
+/* ─── small stat card ─── */
+const Stat = ({ label, value }: { label: string; value: any }) => (
+  <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
+    <div className="text-lg font-bold text-slate-800">{value ?? "–"}</div>
+    <div className="text-xs text-slate-500">{label}</div>
+  </div>
+);
+
 /* ════════════════════════════════════════════════════════════════════ */
 
 const ResumeEnhancementFraud = () => {
@@ -126,6 +134,14 @@ const ResumeEnhancementFraud = () => {
   const [analysing, setAnalysing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [jobDesc, setJobDesc] = useState("");
+  const [jdFileName, setJdFileName] = useState("");
+  const [atsResult, setAtsResult] = useState<any>(null);
+  const [interviewPrep, setInterviewPrep] = useState<any>(null);
+  const [mockSession, setMockSession] = useState<any>(null);
+  const [mockAnswer, setMockAnswer] = useState("");
+  const [mockEvaluation, setMockEvaluation] = useState<any>(null);
+  const [prepLoading, setPrepLoading] = useState(false);
+  const [mockLoading, setMockLoading] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -150,7 +166,25 @@ const ResumeEnhancementFraud = () => {
       if (res.data.success) {
         const raw = res.data.data;
         const list = Array.isArray(raw) ? raw : raw?.resumes || [];
-        if (list.length > 0) setResumeData(list[0]);
+        if (list.length > 0) {
+          const resume = list[0];
+          setResumeData(resume);
+          setJobDesc(resume.jobDescription?.text || "");
+          setJdFileName(resume.jobDescription?.fileName || "");
+          setAtsResult(resume.jdAnalysis || null);
+          setInterviewPrep(resume.interviewPrep || null);
+          if (resume.mockInterview?.questions?.length > 0) {
+            const currentIndex = resume.mockInterview.currentIndex || 0;
+            setMockSession({
+              ...resume.mockInterview,
+              total: resume.mockInterview.questions.length,
+              currentQuestion: resume.mockInterview.questions[currentIndex] || null,
+            });
+          } else {
+            setMockSession(null);
+          }
+          setResult(resume.module3Result || null);
+        }
       }
     } catch (err: any) {
       console.error("Failed to load resume:", err);
@@ -159,27 +193,149 @@ const ResumeEnhancementFraud = () => {
     }
   };
 
+  const handleJobDescriptionFile = (file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = String(event.target?.result || "");
+      setJobDesc(text);
+      setJdFileName(file.name);
+    };
+    reader.readAsText(file);
+  };
+
   const runAnalysis = async () => {
     if (!resumeData) return;
+    if (!jobDesc.trim()) {
+      setError("Please add a job description to run ATS analysis.");
+      return;
+    }
     setAnalysing(true);
     setError("");
     setResult(null);
+    setAtsResult(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await axios.post(
-        `${API_URL}/api/jobseeker/resume-enhancement-fraud`,
-        { resumeId: resumeData._id, jobDescription: jobDesc },
-        { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
-      );
-      if (res.data.success) {
-        setResult(res.data.data);
-      } else {
-        setError(res.data.error || "Analysis failed");
+      const [atsRes, moduleRes] = await Promise.all([
+        axios.post(
+          `${API_URL}/api/jobseeker/jd-ats-analysis`,
+          {
+            resumeId: resumeData._id,
+            jobDescription: jobDesc,
+            jobDescriptionFileName: jdFileName,
+          },
+          { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+        ),
+        axios.post(
+          `${API_URL}/api/jobseeker/resume-enhancement-fraud`,
+          { resumeId: resumeData._id, jobDescription: jobDesc },
+          { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+        ),
+      ]);
+
+      if (atsRes.data?.success) {
+        setAtsResult(atsRes.data.data);
+      }
+      if (moduleRes.data?.success) {
+        setResult(moduleRes.data.data);
+      }
+      if (!atsRes.data?.success || !moduleRes.data?.success) {
+        setError("Some analysis steps failed. Please try again.");
       }
     } catch (err: any) {
       setError(err?.response?.data?.error || err.message || "Analysis failed");
     } finally {
       setAnalysing(false);
+    }
+  };
+
+  const runInterviewPrep = async () => {
+    if (!resumeData) return;
+    if (!jobDesc.trim()) {
+      setError("Please add a job description to generate interview prep.");
+      return;
+    }
+    setPrepLoading(true);
+    setError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_URL}/api/jobseeker/interview-prep`,
+        { resumeId: resumeData._id, jobDescription: jobDesc },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+      );
+      if (res.data.success) {
+        setInterviewPrep(res.data.data);
+      } else {
+        setError(res.data.error || "Interview prep failed");
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err.message || "Interview prep failed");
+    } finally {
+      setPrepLoading(false);
+    }
+  };
+
+  const startMockInterview = async (level: string) => {
+    if (!resumeData) return;
+    setMockLoading(true);
+    setError("");
+    setMockAnswer("");
+    setMockEvaluation(null);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_URL}/api/jobseeker/mock-interview/start`,
+        { resumeId: resumeData._id, level, jobDescription: jobDesc },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
+      );
+      if (res.data.success) {
+        setMockSession(res.data.data);
+      } else {
+        setError(res.data.error || "Failed to start mock interview");
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err.message || "Failed to start mock interview");
+    } finally {
+      setMockLoading(false);
+    }
+  };
+
+  const submitMockAnswer = async () => {
+    if (!resumeData || !mockSession?.currentQuestion) return;
+    if (!mockAnswer.trim()) {
+      setError("Please add your answer before submitting.");
+      return;
+    }
+    setMockLoading(true);
+    setError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_URL}/api/jobseeker/mock-interview/answer`,
+        {
+          resumeId: resumeData._id,
+          questionId: mockSession.currentQuestion.id,
+          answer: mockAnswer,
+        },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+      );
+      if (res.data.success) {
+        setMockEvaluation(res.data.data.evaluation);
+        setMockSession((prev: any) => ({
+          ...prev,
+          currentIndex: res.data.data.currentIndex,
+          currentQuestion: res.data.data.nextQuestion,
+          total: res.data.data.total,
+        }));
+        setMockAnswer("");
+      } else {
+        setError(res.data.error || "Failed to evaluate answer");
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err.message || "Failed to evaluate answer");
+    } finally {
+      setMockLoading(false);
     }
   };
 
@@ -226,7 +382,7 @@ const ResumeEnhancementFraud = () => {
           </div>
 
           <div className="w-full md:w-80">
-            <label className="text-xs text-cyan-100 mb-1 block">Job Description (optional — improves keyword gap analysis)</label>
+            <label className="text-xs text-cyan-100 mb-1 block">Job Description *</label>
             <textarea
               rows={2}
               value={jobDesc}
@@ -234,6 +390,18 @@ const ResumeEnhancementFraud = () => {
               placeholder="Paste job description here for keyword-gap analysis…"
               className="w-full rounded-lg bg-white/10 border border-white/20 text-white placeholder-cyan-200 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/30"
             />
+            <div className="mt-2">
+              <label className="text-xs text-cyan-100 mb-1 block">Or upload a job description file</label>
+              <input
+                type="file"
+                accept=".txt,.md,.doc,.docx,.pdf"
+                onChange={(e) => handleJobDescriptionFile(e.target.files?.[0] || null)}
+                className="w-full text-xs text-cyan-100 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-white/20 file:text-white"
+              />
+              {jdFileName && (
+                <p className="text-[11px] text-cyan-100 mt-1">Loaded: {jdFileName}</p>
+              )}
+            </div>
           </div>
 
           <button
@@ -254,47 +422,278 @@ const ResumeEnhancementFraud = () => {
       )}
 
       {/* ── results ── */}
-      {result && (
+      {(atsResult || result || interviewPrep) && (
         <div className="space-y-6">
-          {/* ── Overview Scores ── */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <TrendingUp size={20} className="text-cyan-600" /> Overview Scores
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 items-center justify-items-center">
-              <ScoreGauge score={result.module3_score || 0} label="Module 3 Overall" size={110} />
-              <ScoreGauge score={fe1?.formatting_score || 0} label="Formatting" />
-              <ScoreGauge score={fe1?.grammar_score || 0} label="Grammar" />
-              <ScoreGauge score={fe1?.keyword_gap_score || 0} label="Keyword Match" />
-              <div className="flex flex-col items-center gap-1">
-                <span
-                  className={`text-sm font-bold uppercase px-4 py-2 rounded-full ${riskColor(
-                    fe2?.risk_level || "none"
-                  )}`}
-                >
-                  {fe2?.risk_level || "none"} risk
+          {atsResult && (
+            <Section
+              title="Resume vs Job Description ATS Analysis"
+              icon={Target}
+              badge={
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${scoreBg(atsResult.atsMatchScore || 0)}`}>
+                  {atsResult.atsMatchScore ?? "–"}/100
                 </span>
-                <span className="text-xs text-slate-500 mt-1">Fraud Score: {fe2?.fraud_score ?? 0}/100</span>
-              </div>
-            </div>
-            {result.executive_summary && (
-              <p className="mt-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
-                <Info size={14} className="inline mr-1 -mt-0.5 text-slate-400" />
-                {result.executive_summary}
-              </p>
-            )}
-          </div>
+              }
+            >
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4">
+                    <ScoreGauge score={atsResult.atsMatchScore || 0} label={atsResult.matchLabel || "ATS Match"} size={110} />
+                    <div>
+                      <p className="text-sm text-slate-600">Summary</p>
+                      <p className="text-sm text-slate-700 font-medium">{atsResult.summary || "No summary available."}</p>
+                    </div>
+                  </div>
 
-          {/* ════════ FE-1 ════════ */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+                    <Stat label="Skills" value={`${atsResult.alignment?.skills ?? 0}%`} />
+                    <Stat label="Keywords" value={`${atsResult.alignment?.keywords ?? 0}%`} />
+                    <Stat label="Experience" value={`${atsResult.alignment?.experience ?? 0}%`} />
+                    <Stat label="Education" value={`${atsResult.alignment?.education ?? 0}%`} />
+                    <Stat label="Tools" value={`${atsResult.alignment?.tools ?? 0}%`} />
+                    <Stat label="Responsibilities" value={`${atsResult.alignment?.responsibilities ?? 0}%`} />
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-3">
+                  {atsResult.missingSkills?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Missing Skills</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {atsResult.missingSkills.map((item: string) => (
+                          <span key={item} className="text-xs px-2 py-0.5 bg-red-50 text-red-600 rounded border border-red-200">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {atsResult.missingKeywords?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Missing Keywords</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {atsResult.missingKeywords.map((item: string) => (
+                          <span key={item} className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 rounded border border-amber-200">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {atsResult.missingCertifications?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Missing Certifications</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {atsResult.missingCertifications.map((item: string) => (
+                          <span key={item} className="text-xs px-2 py-0.5 bg-purple-50 text-purple-700 rounded border border-purple-200">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {atsResult.missingResponsibilities?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Missing Responsibilities</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {atsResult.missingResponsibilities.map((item: string) => (
+                          <span key={item} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {atsResult.missingTools?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Missing Tools/Frameworks</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {atsResult.missingTools.map((item: string) => (
+                          <span key={item} className="text-xs px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded border border-cyan-200">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {atsResult.weaknesses?.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-sm font-semibold text-slate-700 mb-2">Weaknesses</p>
+                  <ul className="space-y-1">
+                    {atsResult.weaknesses.map((item: string, i: number) => (
+                      <li key={`${item}-${i}`} className="text-sm text-slate-600 flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {atsResult.recommendations?.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-sm font-semibold text-slate-700 mb-2">Recommendations</p>
+                  <ul className="space-y-1">
+                    {atsResult.recommendations.map((item: string, i: number) => (
+                      <li key={`${item}-${i}`} className="text-sm text-slate-600 flex items-start gap-2">
+                        <Lightbulb size={14} className="text-cyan-500 mt-0.5 shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </Section>
+          )}
+
           <Section
-            title="FE-1: Formatting, Grammar & Keyword Gaps"
-            icon={Type}
+            title="AI Interview Preparation"
+            icon={BookOpen}
             badge={
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${scoreBg(fe1?.overall_fe1_score || 0)}`}>
-                {fe1?.overall_fe1_score ?? "–"}/100
-              </span>
+              interviewPrep ? (
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${scoreBg(interviewPrep.readinessScore || 0)}`}>
+                  {interviewPrep.readinessScore ?? "–"}/100
+                </span>
+              ) : null
             }
           >
+            {!interviewPrep ? (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <p className="text-sm text-slate-600">Generate interview questions and readiness score based on your resume and job description.</p>
+                <button
+                  onClick={runInterviewPrep}
+                  disabled={prepLoading}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-60"
+                >
+                  {prepLoading ? "Generating..." : "Generate Interview Prep"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <ScoreGauge score={interviewPrep.readinessScore || 0} label="Interview Readiness" size={90} />
+                  <div>
+                    <p className="text-sm text-slate-600">Focus Areas</p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {(interviewPrep.focusAreas || []).map((area: string) => (
+                        <span key={area} className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 rounded border border-amber-200">{area}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {["beginner", "intermediate", "advanced"].map((level) => {
+                    const count = (interviewPrep.questions || []).filter((q: any) => q.level === level).length;
+                    return (
+                      <div key={level} className="border border-slate-200 rounded-xl p-3">
+                        <p className="text-xs uppercase text-slate-500">{level}</p>
+                        <p className="text-lg font-semibold text-slate-800">{count} questions</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => startMockInterview("beginner")}
+                    disabled={mockLoading}
+                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
+                  >
+                    Start Beginner Mock
+                  </button>
+                  <button
+                    onClick={() => startMockInterview("intermediate")}
+                    disabled={mockLoading}
+                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
+                  >
+                    Start Intermediate Mock
+                  </button>
+                  <button
+                    onClick={() => startMockInterview("advanced")}
+                    disabled={mockLoading}
+                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
+                  >
+                    Start Advanced Mock
+                  </button>
+                </div>
+
+                {mockSession?.currentQuestion && (
+                  <div className="mt-4 border border-slate-200 rounded-xl p-4">
+                    <p className="text-xs text-slate-500">Question {mockSession.currentIndex + 1} of {mockSession.total}</p>
+                    <p className="text-sm font-semibold text-slate-800 mt-1">{mockSession.currentQuestion.question}</p>
+                    <textarea
+                      value={mockAnswer}
+                      onChange={(e) => setMockAnswer(e.target.value)}
+                      rows={4}
+                      className="w-full mt-3 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      placeholder="Type your answer here..."
+                    />
+                    <button
+                      onClick={submitMockAnswer}
+                      disabled={mockLoading}
+                      className="mt-3 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-60"
+                    >
+                      {mockLoading ? "Evaluating..." : "Submit Answer"}
+                    </button>
+
+                    {mockEvaluation && (
+                      <div className="mt-4 bg-slate-50 rounded-lg border border-slate-200 p-3">
+                        <p className="text-sm font-semibold text-slate-800">Feedback</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-2 text-xs text-slate-600">
+                          <span>Score: {mockEvaluation.score}</span>
+                          <span>Confidence: {mockEvaluation.confidence}</span>
+                          <span>Accuracy: {mockEvaluation.accuracy}</span>
+                          <span>Clarity: {mockEvaluation.clarity}</span>
+                          <span>Completeness: {mockEvaluation.completeness}</span>
+                        </div>
+                        <p className="text-sm text-slate-700 mt-2">{mockEvaluation.feedback}</p>
+                        {mockEvaluation.improvedAnswer && (
+                          <div className="mt-2">
+                            <p className="text-xs text-slate-500">Better Answer</p>
+                            <p className="text-sm text-slate-700">{mockEvaluation.improvedAnswer}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </Section>
+          {result && (
+            <>
+              {/* ── Overview Scores ── */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <TrendingUp size={20} className="text-cyan-600" /> Overview Scores
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 items-center justify-items-center">
+                  <ScoreGauge score={result?.module3_score || 0} label="Module 3 Overall" size={110} />
+                  <ScoreGauge score={fe1?.formatting_score || 0} label="Formatting" />
+                  <ScoreGauge score={fe1?.grammar_score || 0} label="Grammar" />
+                  <ScoreGauge score={fe1?.keyword_gap_score || 0} label="Keyword Match" />
+                  <div className="flex flex-col items-center gap-1">
+                    <span
+                      className={`text-sm font-bold uppercase px-4 py-2 rounded-full ${riskColor(
+                        fe2?.risk_level || "none"
+                      )}`}
+                    >
+                      {fe2?.risk_level || "none"} risk
+                    </span>
+                    <span className="text-xs text-slate-500 mt-1">Fraud Score: {fe2?.fraud_score ?? 0}/100</span>
+                  </div>
+                </div>
+                {result.executive_summary && (
+                  <p className="mt-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
+                    <Info size={14} className="inline mr-1 -mt-0.5 text-slate-400" />
+                    {result.executive_summary}
+                  </p>
+                )}
+              </div>
+
+              {/* ════════ FE-1 ════════ */}
+              <Section
+                title="FE-1: Formatting, Grammar & Keyword Gaps"
+                icon={Type}
+                badge={
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${scoreBg(fe1?.overall_fe1_score || 0)}`}>
+                    {fe1?.overall_fe1_score ?? "–"}/100
+                  </span>
+                }
+              >
             {/* Issues */}
             {fe1?.issues?.length > 0 && (
               <div className="mb-4">
@@ -690,21 +1089,15 @@ const ResumeEnhancementFraud = () => {
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold rounded-xl shadow hover:shadow-lg transition disabled:opacity-60"
             >
               <RefreshCw size={18} className={analysing ? "animate-spin" : ""} />
-              {analysing ? "Re-Analysing…" : "Re-Run Analysis"}
+              {analysing ? "Re-Analysing\u2026" : "Re-Run Analysis"}
             </button>
           </div>
+          </>
+          )}
         </div>
       )}
     </DashboardLayout>
   );
 };
-
-/* small stat card */
-const Stat = ({ label, value }: { label: string; value: any }) => (
-  <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
-    <div className="text-lg font-bold text-slate-800">{value ?? "–"}</div>
-    <div className="text-xs text-slate-500">{label}</div>
-  </div>
-);
 
 export default ResumeEnhancementFraud;

@@ -27,6 +27,9 @@ import {
   Send,
   X,
   Eye,
+  Settings,
+  Building2,
+  Image as ImageIcon,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -133,7 +136,7 @@ const HRDashboardNew = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeSection, setActiveSection] = useState("dashboard");
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
 
   // State
   const [resumes, setResumes] = useState<Resume[]>([]);
@@ -152,6 +155,15 @@ const HRDashboardNew = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [showJobModal, setShowJobModal] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [showCompanyProfileModal, setShowCompanyProfileModal] = useState(false);
+  const [savingCompanyProfile, setSavingCompanyProfile] = useState(false);
+  const [companyProfileForm, setCompanyProfileForm] = useState({
+    name: "",
+    logoUrl: "",
+    description: "",
+    website: "",
+    location: "",
+  });
   const [resumeFilter, setResumeFilter] = useState<"all" | "verified" | "shortlisted" | "needs_review" | "rejected" | "flagged">("all");
   const [jobFilter, setJobFilter] = useState<"all" | "active">("all");
   const [showResultsModal, setShowResultsModal] = useState(false);
@@ -215,6 +227,29 @@ const HRDashboardNew = () => {
     fetchJobs();
     fetchReceivedApplications();
   }, []);
+
+  useEffect(() => {
+    if (user?.role !== "hr") return;
+
+    const profileName = user.companyProfile?.name || user.company || "";
+
+    setCompanyProfileForm({
+      name: profileName,
+      logoUrl: user.companyProfile?.logoUrl || "",
+      description: user.companyProfile?.description || "",
+      website: user.companyProfile?.website || "",
+      location: user.companyProfile?.location || "",
+    });
+
+    if (!editingJob) {
+      setJobForm((prev) => ({
+        ...prev,
+        company: profileName,
+      }));
+    }
+
+    setShowCompanyProfileModal(!profileName);
+  }, [user, editingJob]);
 
   const fetchReceivedApplications = async () => {
     try {
@@ -323,7 +358,7 @@ const HRDashboardNew = () => {
   const resetJobForm = () => {
     setJobForm({
       title: "",
-      company: "",
+      company: user?.companyProfile?.name || user?.company || "",
       location: "",
       type: "full-time",
       salary: "",
@@ -365,9 +400,48 @@ const HRDashboardNew = () => {
     resetJobForm();
   };
 
+  const handleCompanyProfileSave = async () => {
+    if (!companyProfileForm.name.trim()) {
+      alert("Company name is required");
+      return;
+    }
+
+    try {
+      setSavingCompanyProfile(true);
+      const token = localStorage.getItem("token");
+      await axios.put(
+        `${API_URL}/api/hr/company-profile`,
+        {
+          name: companyProfileForm.name.trim(),
+          logoUrl: companyProfileForm.logoUrl.trim(),
+          description: companyProfileForm.description.trim(),
+          website: companyProfileForm.website.trim(),
+          location: companyProfileForm.location.trim(),
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      await refresh();
+      setShowCompanyProfileModal(false);
+      setJobForm((prev) => ({ ...prev, company: companyProfileForm.name.trim() }));
+    } catch (error: any) {
+      console.error("Company profile update error:", error);
+      alert(error.response?.data?.error || "Failed to update company profile");
+    } finally {
+      setSavingCompanyProfile(false);
+    }
+  };
+
   const handlePostJob = async () => {
-    if (!jobForm.title || !jobForm.company || !jobForm.description) {
-      alert("Please fill in all required fields (Title, Company, Description)");
+    const resolvedCompany = jobForm.company || user?.companyProfile?.name || user?.company || "";
+
+    if (!jobForm.title || !resolvedCompany || !jobForm.description || !jobForm.location) {
+      if (!resolvedCompany) {
+        alert("Please set your company profile before posting a job.");
+        setShowCompanyProfileModal(true);
+        return;
+      }
+      alert("Please fill in all required fields (Title, Location, Description)");
       return;
     }
 
@@ -378,7 +452,7 @@ const HRDashboardNew = () => {
         : `${API_URL}/api/hr/jobs`;
       const method = editingJob ? "put" : "post";
 
-      const response = await axios[method](url, jobForm, {
+      const response = await axios[method](url, { ...jobForm, company: resolvedCompany }, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -900,7 +974,390 @@ const HRDashboardNew = () => {
     { icon: Upload, label: "Upload Resumes", section: "upload" },
     { icon: FileText, label: "Resume Screening", section: "screening" },
     { icon: BarChart2, label: "Candidate Ranking", section: "ranking" },
+    { icon: Settings, label: "Profile Settings", section: "settings" },
   ];
+
+  const companyName = user?.companyProfile?.name || user?.company || "";
+  const companyLogo = user?.companyProfile?.logoUrl || "";
+
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [settingsErr, setSettingsErr] = useState<string | null>(null);
+
+  const [usernameForm, setUsernameForm] = useState(user?.name || "");
+  const [securityForm, setSecurityForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [companyForm, setCompanyForm] = useState({
+    name: companyName,
+    description: user?.companyProfile?.description || "",
+    website: user?.companyProfile?.website || "",
+    location: user?.companyProfile?.location || "",
+    linkedin: (user as any)?.companyProfile?.linkedin || "",
+  });
+
+  useEffect(() => {
+    setUsernameForm(user?.name || "");
+    setCompanyForm({
+      name: user?.companyProfile?.name || user?.company || "",
+      description: user?.companyProfile?.description || "",
+      website: user?.companyProfile?.website || "",
+      location: user?.companyProfile?.location || "",
+      linkedin: (user as any)?.companyProfile?.linkedin || "",
+    });
+  }, [user]);
+
+  const clearMsgs = () => {
+    setSettingsMsg(null);
+    setSettingsErr(null);
+  };
+
+  const handleUpdateUsername = async () => {
+    clearMsgs();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    const nextName = usernameForm.trim();
+    if (!nextName) {
+      setSettingsErr("Username is required.");
+      return;
+    }
+    try {
+      setSettingsLoading(true);
+      await axios.put(
+        `${API_URL}/api/hr/username`,
+        { name: nextName },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await refresh();
+      setSettingsMsg("Username updated successfully.");
+    } catch (error: any) {
+      setSettingsErr(error?.response?.data?.error || "Failed to update username.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const handleUpdateCompany = async () => {
+    clearMsgs();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    const payload = {
+      name: companyForm.name.trim(),
+      description: companyForm.description.trim(),
+      website: companyForm.website.trim(),
+      location: companyForm.location.trim(),
+      linkedin: companyForm.linkedin.trim(),
+      logoUrl: user?.companyProfile?.logoUrl || "",
+    };
+    if (!payload.name) {
+      setSettingsErr("Company name is required.");
+      return;
+    }
+    try {
+      setSettingsLoading(true);
+      await axios.put(`${API_URL}/api/hr/company-profile`, payload, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await refresh();
+      setSettingsMsg("Company profile updated successfully.");
+    } catch (error: any) {
+      setSettingsErr(error?.response?.data?.error || "Failed to update company profile.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    clearMsgs();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    if (!securityForm.currentPassword || !securityForm.newPassword) {
+      setSettingsErr("Current password and new password are required.");
+      return;
+    }
+    if (securityForm.newPassword !== securityForm.confirmPassword) {
+      setSettingsErr("New password and confirm password do not match.");
+      return;
+    }
+    try {
+      setSettingsLoading(true);
+      await axios.post(
+        `${API_URL}/api/change-password`,
+        { currentPassword: securityForm.currentPassword, newPassword: securityForm.newPassword },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setSecurityForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setSettingsMsg("Password updated successfully.");
+    } catch (error: any) {
+      setSettingsErr(error?.response?.data?.error || "Failed to change password.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const handleUploadCompanyLogo = async (file: File) => {
+    clearMsgs();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      setSettingsLoading(true);
+      const form = new FormData();
+      form.append("logo", file);
+      await axios.post(`${API_URL}/api/hr/company-logo`, form, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await refresh();
+      setSettingsMsg("Company logo updated.");
+    } catch (error: any) {
+      setSettingsErr(error?.response?.data?.error || "Failed to upload logo.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const handleRemoveCompanyLogo = async () => {
+    clearMsgs();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      setSettingsLoading(true);
+      await axios.delete(`${API_URL}/api/hr/company-logo`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await refresh();
+      setSettingsMsg("Company logo removed.");
+    } catch (error: any) {
+      setSettingsErr(error?.response?.data?.error || "Failed to remove logo.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const renderProfileSettings = () => (
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Profile & Account Settings</h2>
+            <p className="text-slate-600 text-sm">
+              Manage your HR profile, company branding, and security settings.
+            </p>
+          </div>
+          {settingsLoading && (
+            <div className="flex items-center gap-2 text-slate-600 text-sm">
+              <Loader className="animate-spin" size={16} />
+              Saving...
+            </div>
+          )}
+        </div>
+
+        {(settingsMsg || settingsErr) && (
+          <div
+            className={`mt-4 rounded-xl px-4 py-3 text-sm border ${
+              settingsErr
+                ? "bg-red-50 border-red-200 text-red-700"
+                : "bg-emerald-50 border-emerald-200 text-emerald-700"
+            }`}
+          >
+            {settingsErr || settingsMsg}
+          </div>
+        )}
+      </div>
+
+      {/* Profile Image / Company Logo */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <ImageIcon size={18} className="text-slate-700" />
+          <h3 className="font-bold text-slate-900">Company Logo</h3>
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-center gap-5">
+          <div className="w-20 h-20 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center">
+            {companyLogo ? (
+              <img
+                src={`${API_URL}${companyLogo}`}
+                alt="Company logo"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <Building2 className="text-slate-400" size={28} />
+            )}
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-slate-600">
+              Upload a logo to show on your dashboard, job cards, and company listings.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <label className="px-4 py-2 bg-blue-600 text-white rounded-xl cursor-pointer hover:bg-blue-700 transition-all text-sm font-semibold">
+                Upload Logo
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleUploadCompanyLogo(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleRemoveCompanyLogo}
+                disabled={!companyLogo || settingsLoading}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-all text-sm font-semibold disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Personal Information */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <h3 className="font-bold text-slate-900 mb-4">Personal Information</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Username</label>
+            <input
+              value={usernameForm}
+              onChange={(e) => setUsernameForm(e.target.value)}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="Your username"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Email</label>
+            <input
+              value={user?.email || ""}
+              disabled
+              className="mt-2 w-full px-4 py-2.5 border border-slate-200 bg-slate-50 rounded-xl text-slate-600"
+            />
+          </div>
+        </div>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handleUpdateUsername}
+            disabled={settingsLoading}
+            className="px-5 py-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all text-sm font-semibold disabled:opacity-50"
+          >
+            Save Username
+          </button>
+        </div>
+      </div>
+
+      {/* Company Information */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <h3 className="font-bold text-slate-900 mb-4">Company Information</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Company Name</label>
+            <input
+              value={companyForm.name}
+              onChange={(e) => setCompanyForm((p) => ({ ...p, name: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="Company name"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Website URL</label>
+            <input
+              value={companyForm.website}
+              onChange={(e) => setCompanyForm((p) => ({ ...p, website: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="https://company.com"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Location</label>
+            <input
+              value={companyForm.location}
+              onChange={(e) => setCompanyForm((p) => ({ ...p, location: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="City, Country"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">LinkedIn</label>
+            <input
+              value={companyForm.linkedin}
+              onChange={(e) => setCompanyForm((p) => ({ ...p, linkedin: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="LinkedIn company page URL"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-sm font-semibold text-slate-700">Company Description</label>
+            <textarea
+              value={companyForm.description}
+              onChange={(e) => setCompanyForm((p) => ({ ...p, description: e.target.value }))}
+              rows={4}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              placeholder="Short company description..."
+            />
+          </div>
+        </div>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handleUpdateCompany}
+            disabled={settingsLoading}
+            className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all text-sm font-semibold disabled:opacity-50"
+          >
+            Save Company Info
+          </button>
+        </div>
+      </div>
+
+      {/* Security Settings */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <h3 className="font-bold text-slate-900 mb-4">Security Settings</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Current Password</label>
+            <input
+              type="password"
+              value={securityForm.currentPassword}
+              onChange={(e) => setSecurityForm((p) => ({ ...p, currentPassword: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">New Password</label>
+            <input
+              type="password"
+              value={securityForm.newPassword}
+              onChange={(e) => setSecurityForm((p) => ({ ...p, newPassword: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Confirm Password</label>
+            <input
+              type="password"
+              value={securityForm.confirmPassword}
+              onChange={(e) => setSecurityForm((p) => ({ ...p, confirmPassword: e.target.value }))}
+              className="mt-2 w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+        </div>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handleChangePassword}
+            disabled={settingsLoading}
+            className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all text-sm font-semibold disabled:opacity-50"
+          >
+            Update Password
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const openResumeViewer = (filename: string | undefined, title?: string) => {
     if (!filename) return;
@@ -2620,15 +3077,32 @@ const HRDashboardNew = () => {
 
               <div>
                 <label className="block text-sm font-semibold text-slate-900 mb-2">
-                  Company *
+                  Company Name *
                 </label>
-                <input
-                  type="text"
-                  value={jobForm.company}
-                  onChange={(e) => handleJobFormChange("company", e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500"
-                  placeholder="e.g., Tech Corp"
-                />
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={jobForm.company}
+                      readOnly
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl bg-slate-50 text-slate-700"
+                      placeholder="Set in Company Profile"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCompanyProfileModal(true)}
+                      className="px-3 py-2 text-sm font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-all"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                  {!jobForm.company && (
+                    <p className="text-xs text-red-600">
+                      Set your company profile before posting a job.
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500">Managed in Company Profile</p>
+                </div>
               </div>
 
               <div>
@@ -2850,8 +3324,104 @@ const HRDashboardNew = () => {
     );
   };
 
+  const canCloseCompanyProfile = Boolean(user?.companyProfile?.name || user?.company);
+
   return (
     <div className="flex h-screen bg-slate-50">
+      {showCompanyProfileModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000] p-4 isolate">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl">
+            <div className="border-b border-slate-200 p-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Company Profile</h2>
+                <p className="text-sm text-slate-600">
+                  This info is shown on company listings and auto-fills job posts.
+                </p>
+              </div>
+              {canCloseCompanyProfile && (
+                <button
+                  onClick={() => setShowCompanyProfileModal(false)}
+                  className="p-2 hover:bg-slate-100 rounded-lg transition-all"
+                >
+                  <X size={20} />
+                </button>
+              )}
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-900 mb-2">Company Name *</label>
+                <input
+                  type="text"
+                  value={companyProfileForm.name}
+                  onChange={(e) => setCompanyProfileForm((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500"
+                  placeholder="e.g., Nova Labs"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-2">Logo URL</label>
+                  <input
+                    type="url"
+                    value={companyProfileForm.logoUrl}
+                    onChange={(e) => setCompanyProfileForm((prev) => ({ ...prev, logoUrl: e.target.value }))}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500"
+                    placeholder="https://..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-2">Website</label>
+                  <input
+                    type="url"
+                    value={companyProfileForm.website}
+                    onChange={(e) => setCompanyProfileForm((prev) => ({ ...prev, website: e.target.value }))}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500"
+                    placeholder="https://company.com"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-900 mb-2">Location</label>
+                <input
+                  type="text"
+                  value={companyProfileForm.location}
+                  onChange={(e) => setCompanyProfileForm((prev) => ({ ...prev, location: e.target.value }))}
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500"
+                  placeholder="City, Country"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-900 mb-2">Description</label>
+                <textarea
+                  value={companyProfileForm.description}
+                  onChange={(e) => setCompanyProfileForm((prev) => ({ ...prev, description: e.target.value }))}
+                  className="w-full h-28 px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:border-cyan-500 resize-none"
+                  placeholder="Short company overview..."
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 p-6 flex items-center justify-end gap-3 bg-slate-50">
+              {canCloseCompanyProfile && (
+                <button
+                  onClick={() => setShowCompanyProfileModal(false)}
+                  className="px-6 py-3 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                onClick={handleCompanyProfileSave}
+                disabled={savingCompanyProfile}
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:shadow-lg transition-all disabled:opacity-50"
+              >
+                {savingCompanyProfile ? "Saving..." : "Save Company Profile"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* AI Screening Results Modal */}
       {showResultsModal && screeningResults && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4 isolate">
@@ -3669,6 +4239,24 @@ const HRDashboardNew = () => {
           </button>
         </div>
 
+        {sidebarOpen && (
+          <div className="p-4 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 overflow-hidden flex items-center justify-center">
+                {companyLogo ? (
+                  <img src={`${API_URL}${companyLogo}`} alt="Company logo" className="w-full h-full object-cover" />
+                ) : (
+                  <Building2 size={18} className="text-white/70" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold truncate">{companyName || "Your Company"}</p>
+                <p className="text-xs text-white/70 truncate">{user?.name || "HR"}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {menuItems.map((item, idx) => (
             <button
@@ -3704,10 +4292,38 @@ const HRDashboardNew = () => {
         {/* Header */}
         <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
           <div className="px-8 py-4">
-            <h1 className="text-2xl font-bold text-slate-900">
-              {menuItems.find((item) => item.section === activeSection)?.label || "Dashboard"}
-            </h1>
-            <p className="text-slate-600">Welcome back, {user?.name}!</p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  {menuItems.find((item) => item.section === activeSection)?.label || "Dashboard"}
+                </h1>
+                <p className="text-slate-600">
+                  {companyName ? (
+                    <>
+                      <span className="font-semibold text-slate-800">{companyName}</span> — Welcome back,{" "}
+                      {user?.name}!
+                    </>
+                  ) : (
+                    <>Welcome back, {user?.name}!</>
+                  )}
+                </p>
+              </div>
+              {companyName && (
+                <div className="hidden md:flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center">
+                    {companyLogo ? (
+                      <img
+                        src={`${API_URL}${companyLogo}`}
+                        alt="Company logo"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Building2 className="text-slate-400" size={18} />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -3721,6 +4337,7 @@ const HRDashboardNew = () => {
           {activeSection === "screening" && renderScreening()}
           {activeSection === "ranking" && renderRanking()}
           {activeSection === "anomalies" && renderAnomalies()}
+          {activeSection === "settings" && renderProfileSettings()}
         </main>
       </div>
 

@@ -20,6 +20,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import FormData from 'form-data';
 import { matchScrapedJobs, extractSkillsFromResume } from '../utils/recommendationEngine.js';
+import { generateJson } from '../services/aiService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,7 +157,58 @@ async function loadResumeTextForAnalysis(resume) {
 router.get('/me', authMiddleware, (req, res) => {
   const user = req.user;
   // exclude sensitive fields
-  res.json({ id: user._id, email: user.email, name: user.name, avatar: user.avatar, role: user.role, isPremium: user.isPremium || false, premiumExpiresAt: user.premiumExpiresAt || null });
+  res.json({
+    id: user._id,
+    email: user.email,
+    name: user.name,
+    avatar: user.avatar,
+    role: user.role,
+    company: user.company || "",
+    companyProfile: user.companyProfile || null,
+    isPremium: user.isPremium || false,
+    premiumExpiresAt: user.premiumExpiresAt || null,
+  });
+});
+
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * PUT /api/hr/username
+ * Change HR username (unique)
+ */
+router.put('/hr/username', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'hr') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    const { name } = req.body;
+    const nextName = String(name || '').trim();
+    if (!nextName) {
+      return res.status(400).json({ success: false, error: 'Username is required' });
+    }
+    if (nextName.length < 2 || nextName.length > 50) {
+      return res.status(400).json({ success: false, error: 'Username must be 2–50 characters' });
+    }
+
+    const clash = await User.findOne({
+      _id: { $ne: req.user._id },
+      name: { $regex: new RegExp(`^${escapeRegex(nextName)}$`, 'i') },
+    }).select('_id');
+    if (clash) {
+      return res.status(409).json({ success: false, error: 'Username already taken' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { name: nextName },
+      { new: true }
+    );
+
+    res.json({ success: true, data: { name: user?.name }, message: 'Username updated' });
+  } catch (error) {
+    console.error('Update username error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // ============================================
@@ -428,6 +480,42 @@ router.post('/jobseeker/upload-resume', authMiddleware, upload.single('resume'),
 });
 
 /**
+ * POST /api/jobseeker/reset-resume-session
+ * Clears ALL resume-related data for the current user (so "New Upload" starts fresh).
+ * This is intentionally destructive: deletes resumes, matches, interview prep, module3, enhanced outputs, and saved-job/search artifacts.
+ */
+router.post('/jobseeker/reset-resume-session', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Collect resume ids first so we can delete dependent docs
+    const resumes = await Resume.find({ user: userId }).select('_id').lean();
+    const resumeIds = resumes.map(r => r._id);
+
+    const deletedResumes = await Resume.deleteMany({ user: userId });
+    const deletedMatches = resumeIds.length > 0 ? await Match.deleteMany({ resume: { $in: resumeIds } }) : { deletedCount: 0 };
+
+    // Per requirements: clear job recommendation artifacts and saved jobs
+    const deletedSavedJobs = await SavedJob.deleteMany({ user: userId });
+    const deletedJobAlerts = await JobAlert.deleteMany({ user: userId });
+
+    res.json({
+      success: true,
+      message: 'Resume session reset. Please upload a new resume to start fresh.',
+      data: {
+        deletedResumes: deletedResumes.deletedCount || 0,
+        deletedMatches: deletedMatches.deletedCount || 0,
+        deletedSavedJobs: deletedSavedJobs.deletedCount || 0,
+        deletedJobAlerts: deletedJobAlerts.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Reset resume session error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * POST /api/jobseeker/analyze/:resumeId
  * Analyze resume for ATS score and enhancement suggestions
  */
@@ -523,7 +611,7 @@ router.get('/jobs/active', authMiddleware, async (req, res) => {
 
     // Fetch all active jobs posted by any HR
     const activeJobs = await Job.find({ status: 'active' })
-      .populate('postedBy', 'name email company')
+      .populate('postedBy', 'name email company companyProfile')
       .sort({ createdAt: -1 });
 
     console.log(`\n[ACTIVE-JOBS] Found ${activeJobs.length} active HR-posted jobs`);
@@ -583,12 +671,22 @@ router.get('/jobs/active', authMiddleware, async (req, res) => {
         matchScore = Math.min(100, Math.round(skillMatch + titleMatch + descMatch + reqMatch));
       }
 
+      const companyProfile = jobObj.postedBy?.companyProfile || {};
+      const companyLogoUrl = jobObj.companyLogoUrl || companyProfile.logoUrl || '';
+      const companyDescription = jobObj.companyDescription || companyProfile.description || '';
+      const companyWebsite = jobObj.companyWebsite || companyProfile.website || '';
+      const companyLocation = jobObj.companyLocation || companyProfile.location || '';
+
       return {
         _id: jobObj._id,
         title: jobObj.title,
         company: jobObj.company,
         location: jobObj.location,
         description: jobObj.description,
+        companyLogoUrl,
+        companyDescription,
+        companyWebsite,
+        companyLocation,
         salary: jobObj.salary,
         type: jobObj.type,
         experience: jobObj.experience,
@@ -747,6 +845,164 @@ router.get('/jobseeker/my-resumes', authMiddleware, async (req, res) => {
 // ============================================
 // HR ROUTES
 // ============================================
+
+/**
+ * PUT /api/hr/company-profile
+ * Update HR company profile details
+ */
+router.put('/hr/company-profile', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'hr') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    const { name, logoUrl, description, website, location, linkedin } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'Company name is required' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    user.company = name.trim();
+    user.companyProfile = {
+      name: name.trim(),
+      logoUrl: logoUrl || '',
+      description: description || '',
+      website: website || '',
+      location: location || '',
+      linkedin: linkedin || '',
+    };
+
+    await user.save();
+
+    // Keep all HR job postings in sync with current company profile
+    const companyName = user.companyProfile?.name || user.company || '';
+    const profileLogo = user.companyProfile?.logoUrl || '';
+    const profileDesc = user.companyProfile?.description || '';
+    const profileWebsite = user.companyProfile?.website || '';
+    const profileLocation = user.companyProfile?.location || '';
+    await Job.updateMany(
+      { $or: [{ postedBy: user._id }, { hr: user._id }] },
+      {
+        $set: {
+          company: companyName,
+          companyLogoUrl: profileLogo,
+          companyDescription: profileDesc,
+          companyWebsite: profileWebsite,
+          companyLocation: profileLocation,
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      data: {
+        company: user.company,
+        companyProfile: user.companyProfile,
+      },
+      message: 'Company profile updated successfully',
+    });
+  } catch (error) {
+    console.error('Update company profile error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/hr/company-logo
+ * Upload HR company logo (stored locally) and sync across jobs
+ */
+const companyLogoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, '../../uploads/company-logos');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    cb(null, `company-logo-${req.user._id}-${Date.now()}${ext}`);
+  }
+});
+
+const companyLogoUpload = multer({
+  storage: companyLogoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+});
+
+router.post(
+  '/hr/company-logo',
+  authMiddleware,
+  companyLogoUpload.single('logo'),
+  async (req, res) => {
+    try {
+      if (req.user?.role !== 'hr') {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+      if (!req.file) return res.status(400).json({ success: false, error: 'No image uploaded' });
+
+      const logoUrl = `/uploads/company-logos/${req.file.filename}`;
+      const user = await User.findById(req.user._id);
+      if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+      const existing = user.companyProfile || {};
+      user.companyProfile = {
+        name: existing.name || user.company || '',
+        description: existing.description || '',
+        website: existing.website || '',
+        location: existing.location || '',
+        linkedin: existing.linkedin || '',
+        logoUrl,
+      };
+      if (!user.company && user.companyProfile?.name) user.company = user.companyProfile.name;
+      await user.save();
+
+      await Job.updateMany(
+        { $or: [{ postedBy: user._id }, { hr: user._id }] },
+        { $set: { companyLogoUrl: logoUrl } }
+      );
+
+      res.json({ success: true, data: { logoUrl }, message: 'Company logo updated' });
+    } catch (error) {
+      console.error('Upload company logo error:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+/**
+ * DELETE /api/hr/company-logo
+ * Remove HR company logo reference and sync across jobs
+ */
+router.delete('/hr/company-logo', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'hr') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    if (user.companyProfile) user.companyProfile.logoUrl = '';
+    await user.save();
+
+    await Job.updateMany(
+      { $or: [{ postedBy: user._id }, { hr: user._id }] },
+      { $set: { companyLogoUrl: '' } }
+    );
+
+    res.json({ success: true, message: 'Company logo removed' });
+  } catch (error) {
+    console.error('Remove company logo error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 /**
  * POST /api/hr/detect-anomalies
@@ -1034,11 +1290,20 @@ router.post('/hr/jobs', authMiddleware, async (req, res) => {
       status
     } = req.body;
 
+    const companyProfile = req.user.companyProfile || {};
+    const resolvedCompany = (company && company.trim()) || companyProfile.name || req.user.company || '';
+    const resolvedCompanyLogoUrl = companyProfile.logoUrl || '';
+    const resolvedCompanyDescription = companyProfile.description || '';
+    const resolvedCompanyWebsite = companyProfile.website || '';
+    const resolvedCompanyLocation = companyProfile.location || '';
+
     // Validate required fields
-    if (!title || !company || !location || !description) {
+    if (!title || !resolvedCompany || !location || !description) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Missing required fields: title, company, location, description' 
+        error: !resolvedCompany
+          ? 'Company profile is required. Please set your company name before posting.'
+          : 'Missing required fields: title, company, location, description'
       });
     }
 
@@ -1047,7 +1312,7 @@ router.post('/hr/jobs', authMiddleware, async (req, res) => {
 
     const job = new Job({
       title,
-      company,
+      company: resolvedCompany,
       location,
       type: jobType,
       salary: salary || 'Competitive',
@@ -1057,6 +1322,10 @@ router.post('/hr/jobs', authMiddleware, async (req, res) => {
       benefits: benefits || [],
       experience: experience || 'Not specified',
       industry: industry || 'Technology',
+      companyLogoUrl: resolvedCompanyLogoUrl,
+      companyDescription: resolvedCompanyDescription,
+      companyWebsite: resolvedCompanyWebsite,
+      companyLocation: resolvedCompanyLocation,
       postedBy: userId,
       postedDate: new Date(),
       status: status || 'active'
@@ -2931,42 +3200,63 @@ router.get('/jobs/:jobId/application-status', authMiddleware, async (req, res) =
 router.get('/companies', authMiddleware, async (req, res) => {
   try {
     // Get all HR users
-    const hrUsers = await User.find({ role: 'hr' }).select('name email company avatar');
+    const hrUsers = await User.find({ role: 'hr' }).select('name email company avatar companyProfile');
 
-    // Get job counts per HR
-    const companies = await Promise.all(hrUsers.map(async (hr) => {
-      const activeJobs = await Job.countDocuments({ postedBy: hr._id, status: 'active' });
-      const totalJobs = await Job.countDocuments({ postedBy: hr._id });
-
-      return {
-        _id: hr._id,
-        name: hr.name,
-        email: hr.email,
-        company: hr.company || 'Unknown Company',
-        avatar: hr.avatar,
-        activeJobs,
-        totalJobs
-      };
-    }));
+    const buildCompanyKey = (value) => (
+      (value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+    );
 
     // Group by company name
     const companyMap = {};
-    companies.forEach(c => {
-      const key = c.company;
-      if (!companyMap[key]) {
-        companyMap[key] = {
-          company: key,
+    hrUsers.forEach(hr => {
+      const profile = hr.companyProfile || {};
+      const companyName = profile.name || hr.company || 'Unknown Company';
+      const companyKey = buildCompanyKey(companyName) || 'company';
+
+      if (!companyMap[companyKey]) {
+        companyMap[companyKey] = {
+          companyKey,
+          companyName,
+          logoUrl: profile.logoUrl || '',
+          description: profile.description || '',
+          website: profile.website || '',
+          location: profile.location || '',
           recruiters: [],
           activeJobs: 0,
           totalJobs: 0,
-          email: c.email,
-          avatar: c.avatar
         };
       }
-      companyMap[key].recruiters.push({ name: c.name, email: c.email, _id: c._id });
-      companyMap[key].activeJobs += c.activeJobs;
-      companyMap[key].totalJobs += c.totalJobs;
+
+      companyMap[companyKey].recruiters.push({ name: hr.name, email: hr.email, _id: hr._id, avatar: hr.avatar });
+
+      if (!companyMap[companyKey].logoUrl && profile.logoUrl) {
+        companyMap[companyKey].logoUrl = profile.logoUrl;
+      }
+      if (!companyMap[companyKey].description && profile.description) {
+        companyMap[companyKey].description = profile.description;
+      }
+      if (!companyMap[companyKey].website && profile.website) {
+        companyMap[companyKey].website = profile.website;
+      }
+      if (!companyMap[companyKey].location && profile.location) {
+        companyMap[companyKey].location = profile.location;
+      }
     });
+
+    const countPromises = Object.values(companyMap).map(async (company) => {
+      const recruiterIds = company.recruiters.map(r => r._id);
+      const [activeJobs, totalJobs] = await Promise.all([
+        Job.countDocuments({ postedBy: { $in: recruiterIds }, status: 'active' }),
+        Job.countDocuments({ postedBy: { $in: recruiterIds } }),
+      ]);
+      company.activeJobs = activeJobs;
+      company.totalJobs = totalJobs;
+    });
+
+    await Promise.all(countPromises);
 
     res.json({
       success: true,
@@ -2974,6 +3264,48 @@ router.get('/companies', authMiddleware, async (req, res) => {
     });
   } catch (error) {
     console.error('Get companies error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/companies/:companyKey/jobs
+ * Get active jobs for a specific company
+ */
+router.get('/companies/:companyKey/jobs', authMiddleware, async (req, res) => {
+  try {
+    const { companyKey } = req.params;
+    if (!companyKey) {
+      return res.status(400).json({ success: false, error: 'Company key is required' });
+    }
+
+    const buildCompanyKey = (value) => (
+      (value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+    );
+
+    const hrUsers = await User.find({ role: 'hr' }).select('company companyProfile');
+    const matchedCompany = hrUsers
+      .map(hr => hr.companyProfile?.name || hr.company || '')
+      .find(name => buildCompanyKey(name) === companyKey);
+
+    if (!matchedCompany) {
+      return res.status(404).json({ success: false, error: 'Company not found' });
+    }
+
+    const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const companyRegex = new RegExp(`^${escapeRegExp(matchedCompany)}$`, 'i');
+
+    const jobs = await Job.find({ company: companyRegex, status: 'active' }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: jobs,
+    });
+  } catch (error) {
+    console.error('Get company jobs error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -3512,10 +3844,50 @@ router.delete('/admin/jobs/:id', authMiddleware, async (req, res) => {
 // ============================================
 router.post('/jobseeker/enhance-resume', authMiddleware, requirePremium, async (req, res) => {
   try {
-    const { resumeId } = req.body;
+    const { resumeId, force } = req.body;
     const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
     if (!resume) {
       return res.status(404).json({ success: false, error: 'Resume not found' });
+    }
+
+    const jdText = resume.jobDescription?.text || '';
+    const jdUpdatedAt = resume.jobDescription?.updatedAt ? new Date(resume.jobDescription.updatedAt) : null;
+    const baseAts = Number(resume.jdAnalysis?.atsMatchScore ?? resume.aiAnalysis?.overallScore ?? 0) || 0;
+
+    if (!jdText || !jdText.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Target job description is required. Please run JD ATS analysis first.',
+      });
+    }
+
+    // Rule: Only allow enhancement when ATS is below 75%
+    if (baseAts >= 75) {
+      return res.status(400).json({
+        success: false,
+        error: 'Your ATS score is already 75% or above. Enhancement is available only below 75%.',
+      });
+    }
+
+    // Cache: persist enhanced resume until next JD update / resume upload
+    const cached = resume.enhancedResume;
+    const cachedMeta = resume.enhancedMeta || {};
+    const cachedJdUpdatedAt = cachedMeta.jdUpdatedAt ? new Date(cachedMeta.jdUpdatedAt) : null;
+    const cacheValid =
+      Boolean(cached) &&
+      Boolean(cachedMeta.generatedAt) &&
+      (!jdUpdatedAt || (cachedJdUpdatedAt && jdUpdatedAt.getTime() === cachedJdUpdatedAt.getTime()));
+
+    if (cacheValid && !force) {
+      return res.json({
+        success: true,
+        data: {
+          original: null,
+          enhanced: cached,
+          meta: cachedMeta,
+          cached: true,
+        },
+      });
     }
 
     const parsedData = resume.parsedData || {};
@@ -3552,10 +3924,26 @@ Weaknesses Found: ${weaknesses.join('; ') || 'None identified'}
 Suggestions: ${suggestions.join('; ') || 'None identified'}
 `;
 
-    const prompt = `You are an expert resume writer, ATS optimization specialist, and career consultant. Your task is to completely transform and enhance the following resume to achieve the highest possible scores in ALL four categories: ATS Compatibility, Grammar & Language, Readability, and Structure.
+    const jdContext = `
+JOB DESCRIPTION (Target):
+${jdText.slice(0, 6000)}
+
+JD-BASED MISSING REQUIREMENTS (MUST NOT be fabricated):
+Missing Skills: ${Array.isArray(resume.jdAnalysis?.missingSkills) ? resume.jdAnalysis.missingSkills.join(', ') : ''}
+Missing Keywords: ${Array.isArray(resume.jdAnalysis?.missingKeywords) ? resume.jdAnalysis.missingKeywords.join(', ') : ''}
+Missing Certifications: ${Array.isArray(resume.jdAnalysis?.missingCertifications) ? resume.jdAnalysis.missingCertifications.join(', ') : ''}
+Missing Responsibilities: ${Array.isArray(resume.jdAnalysis?.missingResponsibilities) ? resume.jdAnalysis.missingResponsibilities.join(', ') : ''}
+Missing Tools: ${Array.isArray(resume.jdAnalysis?.missingTools) ? resume.jdAnalysis.missingTools.join(', ') : ''}
+`;
+
+    const prompt = `You are an expert resume writer, ATS optimization specialist, and ethical career consultant.
+
+Your task is to enhance the resume for the job description while staying 100% truthful and preserving depth (do NOT over-summarize).
 
 RESUME DATA:
 ${resumeContext}
+
+${jdContext}
 
 SPECIFIC WEAK AREAS TO FIX (from analysis):
 ${weaknesses.length > 0 ? weaknesses.map((w, i) => `${i + 1}. ${w}`).join('\n') : 'No specific weaknesses identified — focus on general improvement.'}
@@ -3567,6 +3955,17 @@ STRENGTHS TO PRESERVE:
 ${strengths.length > 0 ? strengths.map((s, i) => `${i + 1}. ${s}`).join('\n') : 'Enhance everything.'}
 
 ENHANCEMENT REQUIREMENTS:
+
+0. ETHICAL RULES (CRITICAL):
+   - Do NOT invent degrees, certifications, job titles, employers, dates, tools, projects, or achievements not present in the resume.
+   - Do NOT add a missing requirement just because it appears in the job description. If missing, list it in criticalGaps.
+   - You MAY improve wording, grammar, structure, and clarity of existing content only.
+   - Keep numbers/metrics only if present; do NOT fabricate metrics.
+
+0.5 LENGTH / DEPTH (CRITICAL):
+   - Preserve resume depth and details. Do NOT compress a multi-page resume into one page.
+   - Keep the number of experience and education entries the same as the original; do not remove entries.
+   - Keep bullet counts similar (use 3–6 bullets per role when possible).
 
 1. ATS OPTIMIZATION (Target: 90%+):
    - Use standard ATS-friendly section headers: "Professional Summary", "Experience", "Education", "Skills", "Certifications"
@@ -3619,6 +4018,9 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation) with this e
   ],
   "certifications": ["Any relevant certifications mentioned or recommended for this field"],
   "achievements": ["Key quantifiable achievement 1 with numbers/metrics", "Key achievement 2 with impact", "Key achievement 3 with results"],
+  "criticalGaps": [
+    { "gap": "Missing requirement preventing higher ATS score", "whyItMatters": "Short reason", "howToImprove": "Ethical improvement suggestion" }
+  ],
   "grammarFixes": ["Specific grammar fix 1: before → after", "Grammar fix 2: before → after"],
   "structureImprovements": ["Structure change 1: what was reorganized", "Structure change 2: what section was added/improved"],
   "readabilityImprovements": ["Readability fix 1: what was simplified", "Readability fix 2: what was clarified"],
@@ -3632,7 +4034,8 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation) with this e
     "structure": 93,
     "overall": 92
   },
-  "estimatedNewScore": 92
+  "estimatedNewScore": 92,
+  "estimatedNewAtsMatchScore": 0
 }
 
 CRITICAL RULES:
@@ -3647,6 +4050,7 @@ CRITICAL RULES:
 - suggestionsApplied MUST implement EVERY suggestion listed above`;
 
     let enhancedData = null;
+    let providerUsed = null;
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
@@ -3675,6 +4079,7 @@ CRITICAL RULES:
         const content = groqResponse.data.choices?.[0]?.message?.content;
         if (content) {
           enhancedData = JSON.parse(content);
+          providerUsed = 'groq';
           console.log('[ENHANCE] Groq API success');
         }
       } catch (groqErr) {
@@ -3704,6 +4109,7 @@ CRITICAL RULES:
             content = content.substring(jsonStart, jsonEnd + 1);
           }
           enhancedData = JSON.parse(content);
+          providerUsed = 'gemini';
           console.log('[ENHANCE] Gemini API success');
         }
       } catch (geminiErr) {
@@ -3723,6 +4129,7 @@ CRITICAL RULES:
     enhancedData.enhancedEducation = enhancedData.enhancedEducation || education;
     enhancedData.certifications = enhancedData.certifications || [];
     enhancedData.achievements = enhancedData.achievements || [];
+    enhancedData.criticalGaps = enhancedData.criticalGaps || [];
     enhancedData.grammarFixes = enhancedData.grammarFixes || [];
     enhancedData.atsKeywordsAdded = enhancedData.atsKeywordsAdded || [];
     enhancedData.structureImprovements = enhancedData.structureImprovements || [];
@@ -3747,6 +4154,19 @@ CRITICAL RULES:
     }
     // Ensure estimatedNewScore matches
     enhancedData.estimatedNewScore = enhancedData.enhancedScores.overall || enhancedData.estimatedNewScore || 90;
+    enhancedData.estimatedNewAtsMatchScore =
+      Number(enhancedData.estimatedNewAtsMatchScore ?? enhancedData.enhancedScores.ats ?? enhancedData.estimatedNewScore ?? 0) || 0;
+
+    // Persist enhanced output for refresh/navigation (until next resume upload / JD change)
+    resume.enhancedResume = enhancedData;
+    resume.enhancedMeta = {
+      provider: providerUsed || 'unknown',
+      generatedAt: new Date(),
+      jdUpdatedAt: jdUpdatedAt || null,
+      baseAtsScore: baseAts,
+      estimatedNewAtsScore: enhancedData.estimatedNewAtsMatchScore || enhancedData.enhancedScores?.ats || enhancedData.estimatedNewScore || 0,
+    };
+    await resume.save();
 
     console.log(`[ENHANCE] Returning enhanced resume for ${name}: ${enhancedData.enhancedSkills.length} skills, ${enhancedData.enhancedExperience.length} experiences`);
 
@@ -3754,7 +4174,9 @@ CRITICAL RULES:
       success: true,
       data: {
         original: { name, email, phone, skills, experience, education, summary },
-        enhanced: enhancedData
+        enhanced: enhancedData,
+        meta: resume.enhancedMeta,
+        cached: false,
       }
     });
   } catch (error) {
@@ -3767,10 +4189,74 @@ CRITICAL RULES:
 // MODULE 3: RESUME ENHANCEMENT & FRAUD DETECTION (FE-1, FE-2, FE-3)
 // ============================================
 
+const clampScore = (n) => {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(100, Math.round(x)));
+};
+
+const hasNonEmptyString = (s) => typeof s === 'string' && s.trim().length > 0;
+
+const validateJdAnalysis = (a) => {
+  if (!a || typeof a !== 'object') return false;
+  const score = Number(a.atsMatchScore);
+  if (!Number.isFinite(score)) return false;
+  if (score < 0 || score > 100) return false;
+  if (!a.matchLabel || typeof a.matchLabel !== 'string') return false;
+  if (!a.alignment || typeof a.alignment !== 'object') return false;
+  return true;
+};
+
+const validateInterviewPrep = (p) => {
+  if (!p || typeof p !== 'object') return false;
+  const rs = Number(p.readinessScore);
+  if (!Number.isFinite(rs) || rs < 0 || rs > 100) return false;
+  if (!Array.isArray(p.questions) || p.questions.length < 12) return false;
+  const levels = new Set(p.questions.map((q) => q?.level).filter(Boolean));
+  // Require at least some spread
+  if (!levels.has('beginner') || !levels.has('intermediate') || !levels.has('advanced')) return false;
+  const anyTextMissing = p.questions.some((q) => !hasNonEmptyString(q?.question));
+  if (anyTextMissing) return false;
+  return true;
+};
+
+const validateModule3 = (m) => {
+  if (!m || typeof m !== 'object') return false;
+  const fe1 = m.fe1_formatting_grammar;
+  const fe2 = m.fe2_fraud_detection;
+  const fe3 = m.fe3_enhancement;
+  if (!fe1 || !fe2 || !fe3) return false;
+  if (!Number.isFinite(Number(m.module3_score))) return false;
+  if (!Number.isFinite(Number(fe1.overall_fe1_score))) return false;
+  if (!Number.isFinite(Number(fe1.formatting_score))) return false;
+  if (!Number.isFinite(Number(fe1.grammar_score))) return false;
+  if (!Number.isFinite(Number(fe1.keyword_gap_score))) return false;
+  if (!Number.isFinite(Number(fe2.fraud_score))) return false;
+  if (!hasNonEmptyString(fe2.risk_level)) return false;
+  if (!Number.isFinite(Number(fe3.enhancement_score))) return false;
+  return true;
+};
+
+const generateWithValidation = async ({ prompt, orders, validate }) => {
+  let lastErr = null;
+  for (const providerOrder of orders) {
+    try {
+      const resp = await generateJson({ prompt, providerOrder });
+      if (resp?.result && validate(resp.result)) {
+        return resp;
+      }
+      lastErr = new Error(`Invalid AI output shape (providerOrder=${providerOrder.join(',')})`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('AI providers failed');
+};
+
 /**
  * POST /api/jobseeker/resume-enhancement-fraud
- * Calls Python Module 3 for FE-1 (formatting/grammar/keyword gaps),
- * FE-2 (fraud/inconsistency detection), FE-3 (action verbs, summaries, ATS layout).
+ * Uses Gemini/Groq to produce FE-1 (formatting/grammar/keyword gaps),
+ * FE-2 (fraud/inconsistency detection), FE-3 (enhancement recommendations).
  */
 router.post('/jobseeker/resume-enhancement-fraud', authMiddleware, requirePremium, async (req, res) => {
   try {
@@ -3792,35 +4278,506 @@ router.post('/jobseeker/resume-enhancement-fraud', authMiddleware, requirePremiu
       return res.status(400).json({ success: false, error: 'Resume text is too short for analysis' });
     }
 
-    // Call Python service Module 3 endpoint
-    const pythonResponse = await axios.post(
-      `${PYTHON_SERVICE_URL}/api/enhance-and-detect`,
-      {
-        resumeText,
-        jobDescription: jobDescription || '',
-        parsedData: {
-          name: parsedData.name || '',
-          email: parsedData.email || '',
-          phone: parsedData.phone || '',
-          skills: parsedData.skills || [],
-          education: parsedData.education || [],
-          experience: parsedData.experience || [],
-          raw_text: resumeText,
-        },
-      },
-      { timeout: 30000 }
-    );
+    const jd = String(jobDescription || resume.jobDescription?.text || '').trim();
+    const skills = Array.isArray(parsedData.skills) ? parsedData.skills : [];
+    const exp = Array.isArray(parsedData.experience) ? parsedData.experience : [];
+    const edu = Array.isArray(parsedData.education) ? parsedData.education : [];
 
-    if (!pythonResponse.data.success) {
-      return res.status(500).json({ success: false, error: pythonResponse.data.error || 'Module 3 analysis failed' });
-    }
+    const prompt = `You are an ATS auditor + ethical resume analyst.
+
+Analyze the RESUME vs the JOB DESCRIPTION (if provided) and return ONLY valid JSON (no markdown).
+
+RESUME (raw text, may be long; do best effort):
+${resumeText.slice(0, 12000)}
+
+STRUCTURED FIELDS:
+Skills: ${skills.join(', ')}
+Experience: ${JSON.stringify(exp).slice(0, 3500)}
+Education: ${JSON.stringify(edu).slice(0, 2000)}
+
+JOB DESCRIPTION:
+${jd ? jd.slice(0, 9000) : 'Not provided'}
+
+Goals:
+- FE-1: formatting, grammar, keyword match/gaps (realistic scoring, no placeholders)
+- FE-2: fraud / inconsistency signals (keyword stuffing, unrealistic claims, timeline inconsistencies, skill mismatch). Do not accuse; flag as "signals".
+- FE-3: actionable improvement recommendations (action verbs, summary, ATS layout, content).
+
+Return JSON with EXACT shape:
+{
+  "module3_score": 0,
+  "executive_summary": "",
+  "fe1_formatting_grammar": {
+    "overall_fe1_score": 0,
+    "formatting_score": 0,
+    "grammar_score": 0,
+    "keyword_gap_score": 0,
+    "issues": [],
+    "corrective_actions": [],
+    "formatting_details": {
+      "sections_found": { "summary": false, "experience": false, "education": false, "skills": false, "projects": false, "certifications": false },
+      "word_count": 0,
+      "bullet_usage": { "has_bullets": false, "bullet_count": 0 }
+    },
+    "grammar_details": { "action_verb_count": 0, "metric_count": 0, "weak_phrases_found": [] },
+    "keyword_gap_details": { "resume_keywords_found": [], "missing_keywords": [], "detected_domains": [] }
+  },
+  "fe2_fraud_detection": {
+    "fraud_score": 0,
+    "risk_level": "none|low|medium|high",
+    "summary": "",
+    "issues": [ { "severity": "low|medium|high", "type": "", "message": "", "detail": "" } ],
+    "recommendations": []
+  },
+  "fe3_enhancement": {
+    "enhancement_score": 0,
+    "priority_actions": [],
+    "action_verb_analysis": {
+      "strong_verbs_used": [],
+      "weak_verbs_found": [],
+      "replacement_suggestions": [ { "replace": "", "with": [] } ],
+      "verbs_by_category": { "leadership": [], "technical": [], "impact": [] }
+    },
+    "summary_recommendations": { "has_summary": false, "inferred_role": "", "suggestions": [], "example_summaries": [] },
+    "ats_layout_recommendations": { "ideal_section_order": [], "current_issues": [], "suggestions": [] },
+    "content_recommendations": { "suggestions": [] }
+  }
+}
+
+Rules:
+- Scores must be 0-100, but NEVER default to 0 unless the resume truly contains no signal.
+- Use the job description to compute missing_keywords and keyword_gap_score when JD is provided.
+- Keep issues and actions concrete and tied to the resume text.
+- Risk level should be based on fraud_score: 0-20 none, 21-40 low, 41-70 medium, 71-100 high.`;
+
+    const orders = [
+      ['gemini', 'groq'],
+      ['groq', 'gemini'],
+    ];
+
+    const ai = await generateWithValidation({ prompt, orders, validate: validateModule3 });
+    const out = ai.result;
+
+    // Normalize scores to int 0-100
+    out.module3_score = clampScore(out.module3_score);
+    out.fe1_formatting_grammar.overall_fe1_score = clampScore(out.fe1_formatting_grammar.overall_fe1_score);
+    out.fe1_formatting_grammar.formatting_score = clampScore(out.fe1_formatting_grammar.formatting_score);
+    out.fe1_formatting_grammar.grammar_score = clampScore(out.fe1_formatting_grammar.grammar_score);
+    out.fe1_formatting_grammar.keyword_gap_score = clampScore(out.fe1_formatting_grammar.keyword_gap_score);
+    out.fe2_fraud_detection.fraud_score = clampScore(out.fe2_fraud_detection.fraud_score);
+    out.fe3_enhancement.enhancement_score = clampScore(out.fe3_enhancement.enhancement_score);
+
+    // Derive risk_level if model didn't follow mapping
+    const fs = out.fe2_fraud_detection.fraud_score;
+    const derivedRisk = fs <= 20 ? 'none' : fs <= 40 ? 'low' : fs <= 70 ? 'medium' : 'high';
+    out.fe2_fraud_detection.risk_level = ['none', 'low', 'medium', 'high'].includes(out.fe2_fraud_detection.risk_level)
+      ? out.fe2_fraud_detection.risk_level
+      : derivedRisk;
+
+    resume.module3Result = out;
+    await resume.save();
 
     res.json({
       success: true,
-      data: pythonResponse.data.data,
+      data: out,
+      provider: ai.provider,
     });
   } catch (error) {
     console.error('Module 3 enhancement/fraud error:', error.message);
+    res.status(502).json({
+      success: false,
+      error: `Module 3 analysis failed: ${error.message}`,
+    });
+  }
+});
+
+// ============================================
+// JD-BASED ATS ANALYSIS + INTERVIEW PREP
+// ============================================
+
+/**
+ * POST /api/jobseeker/jd-ats-analysis
+ * Compare resume with job description and persist ATS-style analysis
+ */
+router.post('/jobseeker/jd-ats-analysis', authMiddleware, requirePremium, async (req, res) => {
+  try {
+    const { resumeId, jobDescription, jobDescriptionFileName, providerOrder } = req.body;
+
+    if (!resumeId) {
+      return res.status(400).json({ success: false, error: 'resumeId is required' });
+    }
+    if (!jobDescription || !jobDescription.trim()) {
+      return res.status(400).json({ success: false, error: 'Job description is required' });
+    }
+
+    const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
+    if (!resume) {
+      return res.status(404).json({ success: false, error: 'Resume not found' });
+    }
+
+    const parsedData = resume.parsedData || {};
+    const resumeText = parsedData.rawText || parsedData.raw_text || '';
+    if (!resumeText || resumeText.length < 50) {
+      return res.status(400).json({ success: false, error: 'Resume text is too short for analysis' });
+    }
+
+    const resumeContext = `Name: ${parsedData.name || 'Candidate'}\n` +
+      `Summary: ${parsedData.summary || ''}\n` +
+      `Skills: ${(parsedData.skills || []).join(', ')}\n` +
+      `Experience: ${JSON.stringify(parsedData.experience || []).slice(0, 2000)}\n` +
+      `Education: ${JSON.stringify(parsedData.education || []).slice(0, 1200)}\n` +
+      `Resume Text: ${resumeText.slice(0, 4000)}`;
+
+    const prompt = `You are an ATS analyst. Compare the resume with the job description and return ONLY valid JSON.
+
+RESUME:\n${resumeContext}\n\nJOB DESCRIPTION:\n${jobDescription.slice(0, 6000)}\n
+Return JSON with this exact shape:
+{
+  "atsMatchScore": 0,
+  "matchLabel": "",
+  "alignment": {
+    "skills": 0,
+    "keywords": 0,
+    "experience": 0,
+    "education": 0,
+    "tools": 0,
+    "responsibilities": 0
+  },
+  "matchedKeywords": [],
+  "missingKeywords": [],
+  "missingSkills": [],
+  "missingCertifications": [],
+  "missingResponsibilities": [],
+  "missingTools": [],
+  "weaknesses": [],
+  "recommendations": [],
+  "summary": ""
+}
+
+Rules:
+- atsMatchScore is 0-100.
+- matchLabel should look like "85% Match" or "72% ATS Compatible".
+- Keep arrays unique and concise.
+- weaknesses should include formatting issues, missing achievements, weak summary, or low keyword optimization if applicable.
+- recommendations should be actionable and tailored to the job description.`;
+
+    const orders = [
+      (providerOrder && providerOrder.length > 0 ? providerOrder : null),
+      ['gemini', 'groq'],
+      ['groq', 'gemini'],
+    ].filter(Boolean);
+
+    const aiResponse = await generateWithValidation({ prompt, orders, validate: validateJdAnalysis });
+    const analysis = aiResponse.result;
+    analysis.generatedAt = new Date();
+    analysis.atsMatchScore = clampScore(analysis.atsMatchScore);
+    if (analysis.alignment) {
+      analysis.alignment.skills = clampScore(analysis.alignment.skills);
+      analysis.alignment.keywords = clampScore(analysis.alignment.keywords);
+      analysis.alignment.experience = clampScore(analysis.alignment.experience);
+      analysis.alignment.education = clampScore(analysis.alignment.education);
+      analysis.alignment.tools = clampScore(analysis.alignment.tools);
+      analysis.alignment.responsibilities = clampScore(analysis.alignment.responsibilities);
+    }
+
+    resume.jobDescription = {
+      text: jobDescription,
+      fileName: jobDescriptionFileName || '',
+      updatedAt: new Date(),
+    };
+    resume.jdAnalysis = analysis;
+
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: analysis,
+      provider: aiResponse.provider,
+    });
+  } catch (error) {
+    console.error('JD ATS analysis error:', error.message);
+    res.status(502).json({ success: false, error: `JD ATS analysis failed: ${error.message}` });
+  }
+});
+
+/**
+ * POST /api/jobseeker/interview-prep
+ * Generate interview prep questions + readiness score
+ */
+router.post('/jobseeker/interview-prep', authMiddleware, requirePremium, async (req, res) => {
+  try {
+    const { resumeId, jobDescription, providerOrder } = req.body;
+    if (!resumeId) {
+      return res.status(400).json({ success: false, error: 'resumeId is required' });
+    }
+
+    const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
+    if (!resume) {
+      return res.status(404).json({ success: false, error: 'Resume not found' });
+    }
+
+    const parsedData = resume.parsedData || {};
+    const resumeText = parsedData.rawText || parsedData.raw_text || '';
+    const jdText = (jobDescription && jobDescription.trim()) || resume.jobDescription?.text || '';
+    if (!jdText) {
+      return res.status(400).json({ success: false, error: 'Job description is required' });
+    }
+
+    const missingSkills = Array.isArray(resume.jdAnalysis?.missingSkills) ? resume.jdAnalysis.missingSkills.slice(0, 25) : [];
+    const missingKeywords = Array.isArray(resume.jdAnalysis?.missingKeywords) ? resume.jdAnalysis.missingKeywords.slice(0, 30) : [];
+
+    const prompt = `You are an interview coach. Build interview prep for the candidate.
+
+RESUME SUMMARY:\n${(parsedData.summary || '').slice(0, 800)}\n
+SKILLS:\n${(parsedData.skills || []).join(', ')}\n
+EXPERIENCE:\n${JSON.stringify(parsedData.experience || []).slice(0, 2000)}\n
+JOB DESCRIPTION:\n${jdText.slice(0, 6000)}\n
+MISSING SKILLS (from ATS analysis; ask gap questions but do NOT assume they have them):\n${missingSkills.join(', ')}\n
+MISSING KEYWORDS:\n${missingKeywords.join(', ')}\n
+Return ONLY valid JSON with this exact shape:
+{
+  "readinessScore": 0,
+  "focusAreas": [],
+  "questions": [
+    {
+      "id": "q1",
+      "type": "technical | hr | behavioral | scenario | project",
+      "level": "beginner | intermediate | advanced",
+      "question": "",
+      "focusArea": ""
+    }
+  ]
+}
+
+Rules:
+- Provide at least 30 questions total.
+- Provide at least 10 questions per level (beginner/intermediate/advanced).
+- Cover each type (technical, hr, behavioral, scenario, project).
+- Spread across levels.
+- Align questions with resume skills, job description, projects/experience, and missing gaps when possible.
+- The questions MUST be concrete, not generic, and must be answerable without inventing experience.
+
+Scoring:
+- readinessScore (0-100) should reflect ATS match, missing critical skills, and resume clarity.
+- If there are many missing skills/keywords, reduce readinessScore and include those in focusAreas.`;
+
+    const orders = [
+      (providerOrder && providerOrder.length > 0 ? providerOrder : null),
+      ['gemini', 'groq'],
+      ['groq', 'gemini'],
+    ].filter(Boolean);
+
+    const aiResponse = await generateWithValidation({ prompt, orders, validate: validateInterviewPrep });
+    const prep = aiResponse.result;
+    prep.generatedAt = new Date();
+    prep.readinessScore = clampScore(prep.readinessScore);
+
+    resume.interviewPrep = prep;
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: prep,
+      provider: aiResponse.provider,
+    });
+  } catch (error) {
+    console.error('Interview prep error:', error.message);
+    res.status(502).json({ success: false, error: `Interview prep failed: ${error.message}` });
+  }
+});
+
+/**
+ * POST /api/jobseeker/mock-interview/start
+ * Start or reset a mock interview session
+ */
+router.post('/jobseeker/mock-interview/start', authMiddleware, requirePremium, async (req, res) => {
+  try {
+    const { resumeId, level, jobDescription, providerOrder } = req.body;
+    if (!resumeId) {
+      return res.status(400).json({ success: false, error: 'resumeId is required' });
+    }
+
+    const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
+    if (!resume) {
+      return res.status(404).json({ success: false, error: 'Resume not found' });
+    }
+
+    // Ensure we have interview prep questions; if missing, generate them on-demand (Gemini -> Groq)
+    let prepQuestions = resume.interviewPrep?.questions || [];
+    const jdText =
+      (jobDescription && String(jobDescription).trim()) ||
+      resume.jobDescription?.text ||
+      '';
+
+    if (prepQuestions.length === 0) {
+      if (!jdText || !jdText.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Job description is required to generate interview questions. Please run ATS analysis first.',
+        });
+      }
+
+      const parsedData = resume.parsedData || {};
+      const missingSkills = Array.isArray(resume.jdAnalysis?.missingSkills) ? resume.jdAnalysis.missingSkills.slice(0, 25) : [];
+      const missingKeywords = Array.isArray(resume.jdAnalysis?.missingKeywords) ? resume.jdAnalysis.missingKeywords.slice(0, 30) : [];
+
+      const prompt = `You are an interview coach. Build interview prep for the candidate.
+
+RESUME SUMMARY:\n${(parsedData.summary || '').slice(0, 800)}\n
+SKILLS:\n${(parsedData.skills || []).join(', ')}\n
+EXPERIENCE:\n${JSON.stringify(parsedData.experience || []).slice(0, 2000)}\n
+JOB DESCRIPTION:\n${String(jdText).slice(0, 6000)}\n
+MISSING SKILLS (from ATS analysis; ask gap questions but do NOT assume they have them):\n${missingSkills.join(', ')}\n
+MISSING KEYWORDS:\n${missingKeywords.join(', ')}\n
+Return ONLY valid JSON with this exact shape:
+{
+  "readinessScore": 0,
+  "focusAreas": [],
+  "questions": [
+    {
+      "id": "q1",
+      "type": "technical | hr | behavioral | scenario | project",
+      "level": "beginner | intermediate | advanced",
+      "question": "",
+      "focusArea": ""
+    }
+  ]
+}
+
+Rules:
+- Provide at least 30 questions total.
+- Provide at least 10 questions per level (beginner/intermediate/advanced).
+- Cover each type (technical, hr, behavioral, scenario, project).
+- Align questions with resume skills, job description, projects/experience, and missing gaps when possible.
+- The questions MUST be concrete, not generic.
+
+Scoring:
+- readinessScore (0-100) should reflect ATS match, missing critical skills, and resume clarity.`;
+
+      const orders = [
+        (providerOrder && providerOrder.length > 0 ? providerOrder : null),
+        ['gemini', 'groq'],
+        ['groq', 'gemini'],
+      ].filter(Boolean);
+
+      const aiResponse = await generateWithValidation({ prompt, orders, validate: validateInterviewPrep });
+      const prep = aiResponse.result;
+      prep.generatedAt = new Date();
+      prep.readinessScore = clampScore(prep.readinessScore);
+      resume.interviewPrep = prep;
+      await resume.save();
+      prepQuestions = prep.questions || [];
+    }
+
+    const chosenLevel = level || 'intermediate';
+    const filtered = prepQuestions.filter(q => q.level === chosenLevel);
+    const questions = filtered.length > 0 ? filtered : prepQuestions;
+    const selected = questions.slice(0, 8);
+
+    resume.mockInterview = {
+      level: chosenLevel,
+      currentIndex: 0,
+      questions: selected,
+      history: [],
+      startedAt: new Date(),
+    };
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: {
+        level: chosenLevel,
+        currentIndex: 0,
+        currentQuestion: selected[0] || null,
+        total: selected.length,
+      },
+    });
+  } catch (error) {
+    console.error('Mock interview start error:', error.message);
+    res.status(502).json({ success: false, error: `Mock interview start failed: ${error.message}` });
+  }
+});
+
+/**
+ * POST /api/jobseeker/mock-interview/answer
+ * Evaluate a mock interview response and move to next question
+ */
+router.post('/jobseeker/mock-interview/answer', authMiddleware, requirePremium, async (req, res) => {
+  try {
+    const { resumeId, questionId, answer, providerOrder } = req.body;
+    if (!resumeId || !questionId || !answer) {
+      return res.status(400).json({ success: false, error: 'resumeId, questionId, and answer are required' });
+    }
+
+    const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
+    if (!resume) {
+      return res.status(404).json({ success: false, error: 'Resume not found' });
+    }
+
+    const session = resume.mockInterview;
+    if (!session || !session.questions || session.questions.length === 0) {
+      return res.status(400).json({ success: false, error: 'Mock interview session not started' });
+    }
+
+    const question = session.questions.find(q => q.id === questionId) || session.questions[session.currentIndex || 0];
+    if (!question) {
+      return res.status(404).json({ success: false, error: 'Question not found' });
+    }
+
+    const jdText = resume.jobDescription?.text || '';
+    const prompt = `You are an interview evaluator. Evaluate the candidate answer and return ONLY valid JSON.
+
+Question: ${question.question}\n
+Answer: ${answer}\n
+Job Description: ${jdText.slice(0, 2000)}\n
+Return JSON:
+{
+  "score": 0,
+  "confidence": 0,
+  "accuracy": 0,
+  "clarity": 0,
+  "completeness": 0,
+  "feedback": "",
+  "improvedAnswer": ""
+}
+
+Rules:
+- All numeric scores are 0-100.
+- feedback should be concise and actionable.
+- improvedAnswer should be a stronger sample response.`;
+
+    const aiResponse = await generateJson({ prompt, providerOrder });
+    if (!aiResponse || !aiResponse.result) {
+      return res.status(500).json({ success: false, error: 'AI evaluation service unavailable' });
+    }
+
+    const evaluation = aiResponse.result;
+    session.history.push({
+      questionId: question.id,
+      question: question.question,
+      answer,
+      evaluation,
+      evaluatedAt: new Date(),
+    });
+
+    session.currentIndex = Math.min((session.currentIndex || 0) + 1, session.questions.length);
+    resume.mockInterview = session;
+    await resume.save();
+
+    const nextQuestion = session.questions[session.currentIndex] || null;
+
+    res.json({
+      success: true,
+      data: {
+        evaluation,
+        nextQuestion,
+        currentIndex: session.currentIndex,
+        total: session.questions.length,
+      },
+      provider: aiResponse.provider,
+    });
+  } catch (error) {
+    console.error('Mock interview answer error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -3991,7 +4948,7 @@ router.get('/glassdoor/search', authMiddleware, async (req, res) => {
     }
 
     if (!GLASSDOOR_RAPIDAPI_KEY) {
-      return res.status(500).json({ success: false, error: 'Glassdoor API key not configured' });
+      return res.status(500).json({ success: false, error: 'Glassdoor API key not configured', quotaExceeded: true });
     }
 
     console.log(`[GLASSDOOR] Searching: "${query}" location: "${location || 'any'}"`);
@@ -4034,8 +4991,17 @@ router.get('/glassdoor/search', authMiddleware, async (req, res) => {
       data: { jobs, totalResults: jobs.length, page: parseInt(page) },
     });
   } catch (error) {
-    console.error('[GLASSDOOR] Error:', error.response?.data || error.message);
-    res.status(500).json({ success: false, error: 'Failed to search Glassdoor: ' + (error.response?.data?.message || error.message) });
+    const status = error.response?.status;
+    const apiMsg = error.response?.data?.message || error.message;
+    console.error('[GLASSDOOR] Error:', status, apiMsg);
+
+    if (status === 429) {
+      return res.status(429).json({ success: false, error: 'Glassdoor API quota exceeded. Switching to free job sources.', quotaExceeded: true });
+    }
+    if (status === 403) {
+      return res.status(403).json({ success: false, error: 'Glassdoor API key invalid or subscription inactive.', quotaExceeded: true });
+    }
+    res.status(500).json({ success: false, error: 'Failed to search Glassdoor: ' + apiMsg });
   }
 });
 

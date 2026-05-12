@@ -49,6 +49,7 @@ interface EnhancedResumeData {
   enhancedEducation: any[];
   certifications: string[];
   achievements: string[];
+  criticalGaps?: { gap: string; whyItMatters?: string; howToImprove?: string }[];
   grammarFixes: string[];
   structureImprovements: string[];
   readabilityImprovements: string[];
@@ -57,6 +58,7 @@ interface EnhancedResumeData {
   suggestionsApplied: { suggestion: string; implementation: string }[];
   enhancedScores: EnhancedScores;
   estimatedNewScore: number;
+  estimatedNewAtsMatchScore?: number;
 }
 
 const EnhancedResume = () => {
@@ -69,12 +71,7 @@ const EnhancedResume = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // Redirect free users to premium page
-  useEffect(() => {
-    if (user && !user.isPremium) {
-      navigate("/jobseeker/premium", { replace: true });
-    }
-  }, [user, navigate]);
+  const isPremium = Boolean(user?.isPremium);
 
   useEffect(() => {
     fetchResumeData();
@@ -90,7 +87,15 @@ const EnhancedResume = () => {
         const rawData = response.data.data;
         const resumeList = Array.isArray(rawData) ? rawData : (rawData?.resumes || []);
         if (resumeList.length > 0) {
-          setResumeData(resumeList[0]);
+          const latest = resumeList[0];
+          setResumeData(latest);
+          if (latest?.enhancedResume) {
+            setEnhancedResult(latest.enhancedResume);
+            setShowPreview(true);
+          } else {
+            setEnhancedResult(null);
+            setShowPreview(false);
+          }
         }
       }
     } catch (err: any) {
@@ -101,6 +106,7 @@ const EnhancedResume = () => {
   };
 
   const analysis = resumeData?.aiAnalysis || {};
+  const jdAnalysis = resumeData?.jdAnalysis || {};
   const parsedData = resumeData?.parsedData || {};
 
   // ========== STEP 1: Call Gemini API to regenerate complete resume ==========
@@ -112,9 +118,10 @@ const EnhancedResume = () => {
 
     try {
       const token = localStorage.getItem("token");
+      const force = Boolean(enhancedResult);
       const res = await axios.post(
         `${API_URL}/api/jobseeker/enhance-resume`,
-        { resumeId: resumeData._id },
+        { resumeId: resumeData._id, force },
         { headers: { Authorization: `Bearer ${token}` }, timeout: 60000 }
       );
 
@@ -133,6 +140,7 @@ const EnhancedResume = () => {
         enhancedEducation: enhanced.enhancedEducation || parsedData.education || [],
         certifications: enhanced.certifications || [],
         achievements: enhanced.achievements || [],
+        criticalGaps: enhanced.criticalGaps || [],
         grammarFixes: enhanced.grammarFixes || [],
         structureImprovements: enhanced.structureImprovements || [],
         readabilityImprovements: enhanced.readabilityImprovements || [],
@@ -155,6 +163,7 @@ const EnhancedResume = () => {
             Math.max(89, structureScore + 30) * 0.25
           )
         ),
+        estimatedNewAtsMatchScore: enhanced.estimatedNewAtsMatchScore || enhanced.enhancedScores?.ats || enhanced.estimatedNewScore,
       };
 
       setEnhancedResult(result);
@@ -398,10 +407,14 @@ const EnhancedResume = () => {
   const overallScore = analysis.overallScore || analysis.overall_score ||
     (atsScore ? Math.round(atsScore * 0.35 + grammarScore * 0.20 + readabilityScore * 0.20 + structureScore * 0.25) : 0);
 
+  // Prefer JD-based ATS match score when available (resume vs job description)
+  const jdAtsScore = jdAnalysis?.atsMatchScore ?? jdAnalysis?.ats_match_score;
+  const effectiveAtsScore = typeof jdAtsScore === "number" ? jdAtsScore : overallScore;
+
   // If overall score >= 75%, only show suggestions (no regeneration)
   // If overall score < 75%, allow full AI enhancement to push above 75%
-  const isAlreadyOptimized = overallScore >= 75;
-  const needsEnhancement = overallScore < 75;
+  const isAlreadyOptimized = effectiveAtsScore >= 75;
+  const needsEnhancement = effectiveAtsScore < 75;
 
   // Content gap detection — always shown regardless of score
   const experience = parsedData.experience || [];
@@ -537,11 +550,11 @@ const EnhancedResume = () => {
                 <p className="text-sm font-medium text-slate-500 mb-2">Current Score</p>
                 <div className="w-28 h-28 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center">
                   <div className="w-24 h-24 rounded-full bg-white flex items-center justify-center">
-                    <span className="text-3xl font-bold text-slate-700">{overallScore}%</span>
+                    <span className="text-3xl font-bold text-slate-700">{Math.round(effectiveAtsScore)}%</span>
                   </div>
                 </div>
-                <p className={`mt-2 text-sm font-semibold ${getScoreLabel(overallScore).color}`}>
-                  {getScoreLabel(overallScore).text}
+                <p className={`mt-2 text-sm font-semibold ${getScoreLabel(Math.round(effectiveAtsScore)).color}`}>
+                  {getScoreLabel(Math.round(effectiveAtsScore)).text}
                 </p>
               </div>
 
@@ -555,7 +568,7 @@ const EnhancedResume = () => {
                 <div className={`w-28 h-28 rounded-full flex items-center justify-center ${isAlreadyOptimized && !enhancedResult ? 'bg-gradient-to-br from-emerald-400 to-green-500' : 'bg-gradient-to-br from-green-400 to-emerald-500'}`}>
                   <div className="w-24 h-24 rounded-full bg-white flex items-center justify-center">
                     <span className="text-3xl font-bold text-green-600">
-                      {enhancedResult ? `${enhancedResult.estimatedNewScore}%` : isAlreadyOptimized ? `${overallScore}%` : "75%+"}
+                      {enhancedResult ? `${Math.round(enhancedResult.estimatedNewAtsMatchScore || enhancedResult.estimatedNewScore)}%` : isAlreadyOptimized ? `${Math.round(effectiveAtsScore)}%` : "75%+"}
                     </span>
                   </div>
                 </div>
@@ -806,7 +819,7 @@ const EnhancedResume = () => {
               <CheckCircle className="w-14 h-14 text-white mx-auto mb-3" />
               <h3 className="text-2xl font-bold text-white mb-2">Your Resume Score is Good!</h3>
               <p className="text-green-50 mb-4 max-w-xl mx-auto">
-                Your overall score is <span className="font-bold text-white">{overallScore}%</span> — above the 75% threshold.
+                Your ATS score is <span className="font-bold text-white">{Math.round(effectiveAtsScore)}%</span> — above the 75% threshold.
                 Review the suggestions above to improve it further. Focus on adding any missing content like projects, skills, or certifications.
               </p>
               <p className="text-green-100 text-sm max-w-lg mx-auto">
@@ -820,28 +833,37 @@ const EnhancedResume = () => {
               <Zap className="w-12 h-12 text-yellow-300 mx-auto mb-3" />
               <h3 className="text-2xl font-bold text-white mb-2">Your Resume Needs Enhancement</h3>
               <p className="text-blue-100 mb-6 max-w-xl mx-auto">
-                Your overall score is <span className="font-bold text-white">{overallScore}%</span> (below 75%). Our AI will fix grammar mistakes, structure issues,
+                Your ATS score is <span className="font-bold text-white">{Math.round(effectiveAtsScore)}%</span> (below 75%). Our AI will improve wording, structure,
                 readability problems, and ATS compatibility to push your score above 75%.
               </p>
-              <button
-                onClick={regenerateResume}
-                disabled={enhancing}
-                className={`px-8 py-4 bg-white text-indigo-700 rounded-xl font-bold text-lg hover:bg-indigo-50 hover:shadow-xl transition-all inline-flex items-center gap-3 ${enhancing ? "opacity-80 cursor-wait" : ""}`}
-              >
-                {enhancing ? (
-                  <>
-                    <Loader size={22} className="animate-spin" /> AI is Enhancing Your Resume...
-                  </>
-                ) : enhancedResult ? (
-                  <>
-                    <RefreshCw size={22} /> Regenerate Again
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={22} /> Enhance Resume with AI (Target: 75%+)
-                  </>
-                )}
-              </button>
+              {isPremium ? (
+                <button
+                  onClick={regenerateResume}
+                  disabled={enhancing}
+                  className={`px-8 py-4 bg-white text-indigo-700 rounded-xl font-bold text-lg hover:bg-indigo-50 hover:shadow-xl transition-all inline-flex items-center gap-3 ${enhancing ? "opacity-80 cursor-wait" : ""}`}
+                >
+                  {enhancing ? (
+                    <>
+                      <Loader size={22} className="animate-spin" /> AI is Enhancing Your Resume...
+                    </>
+                  ) : enhancedResult ? (
+                    <>
+                      <RefreshCw size={22} /> Regenerate Again
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={22} /> Enhance Resume with AI (Target: 75%+)
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate("/jobseeker/premium")}
+                  className="px-8 py-4 bg-white text-indigo-700 rounded-xl font-bold text-lg hover:bg-indigo-50 hover:shadow-xl transition-all inline-flex items-center gap-3"
+                >
+                  <Sparkles size={22} /> Upgrade to Premium to Enhance
+                </button>
+              )}
             </div>
           )}
 
@@ -854,7 +876,7 @@ const EnhancedResume = () => {
                 <div>
                   <p className="font-semibold text-emerald-800">Resume Regenerated Successfully!</p>
                   <p className="text-sm text-emerald-600">
-                    Overall: <span className="font-bold">{overallScore}%</span> → <span className="font-bold text-emerald-800">{enhancedResult.estimatedNewScore}%</span>
+                    ATS: <span className="font-bold">{Math.round(effectiveAtsScore)}%</span> → <span className="font-bold text-emerald-800">{Math.round(enhancedResult.estimatedNewAtsMatchScore || enhancedResult.estimatedNewScore)}%</span>
                     {" | "}ATS: <span className="font-bold">{enhancedResult.enhancedScores.ats}%</span>
                     {" | "}Grammar: <span className="font-bold">{enhancedResult.enhancedScores.grammar}%</span>
                     {" | "}Readability: <span className="font-bold">{enhancedResult.enhancedScores.readability}%</span>
@@ -863,6 +885,32 @@ const EnhancedResume = () => {
                   </p>
                 </div>
               </div>
+
+              {/* Critical Gaps Preventing Higher ATS */}
+              {enhancedResult.criticalGaps && enhancedResult.criticalGaps.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-sm border border-red-200 p-6 mb-6">
+                  <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                    Critical Gaps Preventing Higher ATS Score
+                  </h3>
+                  <p className="text-sm text-slate-600 mb-4">
+                    These gaps come from the job description. AI will not invent them—use the suggestions to improve ethically.
+                  </p>
+                  <div className="space-y-3">
+                    {enhancedResult.criticalGaps.map((g, idx) => (
+                      <div key={idx} className="p-4 bg-red-50 rounded-xl border border-red-200">
+                        <p className="text-sm font-semibold text-red-800">{g.gap}</p>
+                        {g.whyItMatters && <p className="text-sm text-red-700 mt-1">{g.whyItMatters}</p>}
+                        {g.howToImprove && (
+                          <p className="text-sm text-slate-700 mt-2">
+                            <span className="font-semibold">How to improve:</span> {g.howToImprove}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* What AI Changed */}
               {(enhancedResult.grammarFixes.length > 0 || enhancedResult.atsKeywordsAdded.length > 0 || enhancedResult.structureImprovements.length > 0 || enhancedResult.readabilityImprovements.length > 0) && (

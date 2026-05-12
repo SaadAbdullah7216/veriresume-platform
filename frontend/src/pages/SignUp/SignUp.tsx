@@ -15,6 +15,11 @@ const SignUp = () => {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState("jobseeker");
+  const [companyName, setCompanyName] = useState("");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyDescription, setCompanyDescription] = useState("");
+  const [companyWebsite, setCompanyWebsite] = useState("");
+  const [companyLocation, setCompanyLocation] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,11 +29,24 @@ const SignUp = () => {
     setLoading(true);
 
     try {
+      if (role === "hr" && !companyName.trim()) {
+        throw new Error("Company name is required for HR accounts");
+      }
       const apiBase = import.meta.env?.VITE_API_URL || "http://localhost:3000";
       const res = await fetch(`${apiBase}/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, name, role }),
+        body: JSON.stringify({
+          email,
+          password,
+          name,
+          role,
+          companyName: role === "hr" ? companyName : "",
+          companyLogoUrl: role === "hr" ? companyLogoUrl : "",
+          companyDescription: role === "hr" ? companyDescription : "",
+          companyWebsite: role === "hr" ? companyWebsite : "",
+          companyLocation: role === "hr" ? companyLocation : "",
+        }),
       });
       const data = await res.json();
 
@@ -199,6 +217,77 @@ const SignUp = () => {
                 </button>
               </div>
             </div>
+
+            {role === "hr" && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Company Name
+                  </label>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    placeholder="Your company name"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Company Website
+                    </label>
+                    <input
+                      type="url"
+                      value={companyWebsite}
+                      onChange={(e) => setCompanyWebsite(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                      placeholder="https://company.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Company Location
+                    </label>
+                    <input
+                      type="text"
+                      value={companyLocation}
+                      onChange={(e) => setCompanyLocation(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                      placeholder="City, Country"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Company Logo URL
+                  </label>
+                  <input
+                    type="url"
+                    value={companyLogoUrl}
+                    onChange={(e) => setCompanyLogoUrl(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Company Description
+                  </label>
+                  <textarea
+                    value={companyDescription}
+                    onChange={(e) => setCompanyDescription(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all resize-none"
+                    placeholder="Short description of your company"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Error Message */}
             {error && (

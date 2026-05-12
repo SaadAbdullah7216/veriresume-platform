@@ -51,6 +51,13 @@ const clearAllSessionData = () => {
   Object.values(SS_KEYS).forEach(k => sessionStorage.removeItem(k));
 };
 
+const clearRecommendationCache = () => {
+  localStorage.removeItem('veriresume_cached_jobs');
+  localStorage.removeItem('veriresume_jobs_timestamp');
+  localStorage.removeItem('veriresume_selected_keywords');
+  localStorage.removeItem('veriresume_search_resumeid');
+};
+
 const ssGet = (key: string, fallback: any = null) => {
   try {
     const v = sessionStorage.getItem(key);
@@ -73,29 +80,14 @@ const UploadResume = () => {
   const [resumeId, setResumeId] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [matchingJobs, setMatchingJobs] = useState<any[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [, setLoadingJobs] = useState(false);
   const [resumeSkills, setResumeSkills] = useState<string[]>([]);
   const [, setParsedData] = useState<any>(null);
-  const [selectedSearchKeywords, setSelectedSearchKeywords] = useState<string[]>([]);
 
   // ── Deep AI Analysis State ──
   const [deepAnalysis, setDeepAnalysis] = useState<any>(null);
   const [loadingDeepAnalysis, setLoadingDeepAnalysis] = useState(false);
   const [deepAnalysisError, setDeepAnalysisError] = useState("");
-
-  // ── Indeed Job Search State ──
-  const [indeedJobs, setIndeedJobs] = useState<any[]>([]);
-  const [loadingIndeed, setLoadingIndeed] = useState(false);
-  const [indeedSearchDone, setIndeedSearchDone] = useState(false);
-  const [indeedCountry, setIndeedCountry] = useState("us");
-  const [indeedLocation, setIndeedLocation] = useState("");
-
-  // ── LinkedIn Job Search State ──
-  const [linkedinJobs, setLinkedinJobs] = useState<any[]>([]);
-  const [loadingLinkedin, setLoadingLinkedin] = useState(false);
-  const [linkedinSearchDone, setLinkedinSearchDone] = useState(false);
-  const [linkedinLocation, setLinkedinLocation] = useState("");
-  const [linkedinTimeRange, setLinkedinTimeRange] = useState("24h");
 
   // ── Unified Job Search State (new) ──
   const [unifiedJobs, setUnifiedJobs] = useState<any[]>([]);
@@ -103,7 +95,6 @@ const UploadResume = () => {
   const [unifiedSearchDone, setUnifiedSearchDone] = useState(false);
   const [unifiedLocation, setUnifiedLocation] = useState("");
   const [unifiedTimeRange, setUnifiedTimeRange] = useState("7d");
-  const [unifiedPlatforms, setUnifiedPlatforms] = useState<{linkedin: boolean; indeed: boolean}>({linkedin: true, indeed: true});
   const [selectedJobTitles, setSelectedJobTitles] = useState<string[]>([]);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
@@ -115,12 +106,19 @@ const UploadResume = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const toggleKeyword = (keyword: string) => {
-    setSelectedSearchKeywords(prev =>
-      prev.includes(keyword)
-        ? prev.filter(k => k !== keyword)
-        : [...prev, keyword]
-    );
+  const resetResumeSession = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      await axios.post(
+        `${API_URL}/api/jobseeker/reset-resume-session`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+      );
+    } catch (err: any) {
+      // We still clear local state even if backend reset fails, but surface message for awareness
+      console.warn("Reset session failed:", err?.response?.data?.error || err.message);
+    }
   };
 
   // ── Restore state from sessionStorage on mount ──
@@ -132,18 +130,13 @@ const UploadResume = () => {
       setAnalysisData(ssGet(SS_KEYS.ANALYSIS_DATA, null));
       setDeepAnalysis(ssGet(SS_KEYS.DEEP_ANALYSIS, null));
       setResumeSkills(ssGet(SS_KEYS.RESUME_SKILLS, []));
-      setSelectedSearchKeywords(ssGet(SS_KEYS.SELECTED_KEYWORDS, []));
       setMatchingJobs(ssGet(SS_KEYS.MATCHING_JOBS, []));
-      setIndeedJobs(ssGet(SS_KEYS.INDEED_JOBS, []));
-      setLinkedinJobs(ssGet(SS_KEYS.LINKEDIN_JOBS, []));
       setAnalysisPending(ssGet(SS_KEYS.ANALYSIS_PENDING, false));
       const savedUnified = ssGet(SS_KEYS.UNIFIED_JOBS, []);
       if (savedUnified.length > 0) {
         setUnifiedJobs(savedUnified);
         setUnifiedSearchDone(true);
       }
-      if (ssGet(SS_KEYS.INDEED_JOBS, []).length > 0) setIndeedSearchDone(true);
-      if (ssGet(SS_KEYS.LINKEDIN_JOBS, []).length > 0) setLinkedinSearchDone(true);
     }
   }, []);
 
@@ -155,14 +148,11 @@ const UploadResume = () => {
       ssSet(SS_KEYS.ANALYSIS_DATA, analysisData);
       ssSet(SS_KEYS.DEEP_ANALYSIS, deepAnalysis);
       ssSet(SS_KEYS.RESUME_SKILLS, resumeSkills);
-      ssSet(SS_KEYS.SELECTED_KEYWORDS, selectedSearchKeywords);
       ssSet(SS_KEYS.MATCHING_JOBS, matchingJobs);
-      ssSet(SS_KEYS.INDEED_JOBS, indeedJobs);
-      ssSet(SS_KEYS.LINKEDIN_JOBS, linkedinJobs);
       ssSet(SS_KEYS.UNIFIED_JOBS, unifiedJobs);
       ssSet(SS_KEYS.ANALYSIS_PENDING, analysisPending);
     }
-  }, [uploadSuccess, resumeId, analysisData, deepAnalysis, resumeSkills, selectedSearchKeywords, matchingJobs, indeedJobs, linkedinJobs, unifiedJobs, analysisPending]);
+  }, [uploadSuccess, resumeId, analysisData, deepAnalysis, resumeSkills, matchingJobs, unifiedJobs, analysisPending]);
 
   // Fetch saved job IDs on mount
   React.useEffect(() => {
@@ -297,8 +287,14 @@ const UploadResume = () => {
       formData.append("targetRole", targetRole);
     }
 
-    // Clear old session data on new upload
+    // Clear old session data on new upload (local + backend)
     clearAllSessionData();
+    clearRecommendationCache();
+    await resetResumeSession();
+    setAnalysisData(null);
+    setDeepAnalysis(null);
+    setResumeSkills([]);
+    setMatchingJobs([]);
     setUnifiedJobs([]);
     setUnifiedSearchDone(false);
     setSelectedJobTitles([]);
@@ -478,34 +474,6 @@ const UploadResume = () => {
         if (deep.recommended_job_keywords && deep.recommended_job_keywords.length > 0) {
           setResumeSkills((prev) => {
             const merged = [...new Set([...deep.recommended_job_keywords, ...prev])];
-
-            // ── Auto-suggest: pre-select the best keywords ──
-            // Prioritize: suggested job titles > skill_keywords > recommended_job_keywords
-            const suggestedTitles: string[] = deep.suggested_job_titles || [];
-            const skillKeywords: string[] = deep.skill_keywords || [];
-            const autoSelect = [
-              ...suggestedTitles.slice(0, 5),
-              ...skillKeywords.slice(0, 10),
-              ...deep.recommended_job_keywords.slice(0, 5),
-            ];
-            // Deduplicate case-insensitively, keep only items present in merged
-            const mergedLower = new Set(merged.map(k => k.toLowerCase()));
-            const seen = new Set<string>();
-            const finalAutoSelect: string[] = [];
-            for (const kw of autoSelect) {
-              const lower = kw.toLowerCase();
-              if (!seen.has(lower) && mergedLower.has(lower)) {
-                // Find the exact-case version in merged
-                const exact = merged.find(m => m.toLowerCase() === lower) || kw;
-                finalAutoSelect.push(exact);
-                seen.add(lower);
-              }
-            }
-            if (finalAutoSelect.length > 0) {
-              console.log(`🎯 Auto-selected ${finalAutoSelect.length} keywords:`, finalAutoSelect);
-              setSelectedSearchKeywords(finalAutoSelect);
-            }
-
             return merged;
           });
         }
@@ -518,85 +486,9 @@ const UploadResume = () => {
     }
   };
 
-  // ── Search Indeed Jobs via RapidAPI ──
-  const searchIndeedJobs = async () => {
-    const keywords = selectedSearchKeywords.length > 0
-      ? selectedSearchKeywords
-      : resumeSkills.slice(0, 5);
-
-    if (keywords.length === 0) return;
-
-    setLoadingIndeed(true);
-    setIndeedSearchDone(false);
-    try {
-      console.log("🔍 Searching Indeed jobs with keywords:", keywords);
-      const response = await axios.post(
-        `${API_URL}/api/jobseeker/search-indeed`,
-        {
-          keywords,
-          location: indeedLocation || undefined,
-          country: indeedCountry,
-          maxResults: 15,
-        },
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-          timeout: 90000,
-        }
-      );
-      if (response.data.success) {
-        const jobs = response.data.data?.jobs || [];
-        console.log(`✅ Indeed jobs found: ${jobs.length}`);
-        setIndeedJobs(jobs);
-      }
-    } catch (err: any) {
-      console.error("Indeed search error:", err);
-    } finally {
-      setLoadingIndeed(false);
-      setIndeedSearchDone(true);
-    }
-  };
-
-  // ── Search LinkedIn Jobs via RapidAPI ──
-  const searchLinkedInJobs = async () => {
-    const keywords = selectedSearchKeywords.length > 0
-      ? selectedSearchKeywords
-      : resumeSkills.slice(0, 5);
-
-    if (keywords.length === 0) return;
-
-    setLoadingLinkedin(true);
-    setLinkedinSearchDone(false);
-    try {
-      console.log("🔗 Searching LinkedIn jobs with keywords:", keywords);
-      const response = await axios.post(
-        `${API_URL}/api/jobseeker/search-linkedin`,
-        {
-          keywords,
-          location: linkedinLocation || undefined,
-          limit: 20,
-          timeRange: linkedinTimeRange,
-        },
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-          timeout: 60000,
-        }
-      );
-      if (response.data.success) {
-        const jobs = response.data.data?.jobs || [];
-        console.log(`✅ LinkedIn jobs found: ${jobs.length}`);
-        setLinkedinJobs(jobs);
-      }
-    } catch (err: any) {
-      console.error("LinkedIn search error:", err);
-    } finally {
-      setLoadingLinkedin(false);
-      setLinkedinSearchDone(true);
-    }
-  };
-
   // ── Unified Job Search (JSearch + Glassdoor + Indeed + LinkedIn — same as FindJobs) ──
   const searchUnifiedJobs = async () => {
-    const titles = selectedJobTitles.length > 0 ? selectedJobTitles : (deepAnalysis?.suggested_job_titles?.slice(0, 3) || resumeSkills.slice(0, 3));
+    const titles = selectedJobTitles.length > 0 ? selectedJobTitles : [];
     if (titles.length === 0) return;
 
     const query = titles.join(", ");
@@ -795,7 +687,7 @@ const UploadResume = () => {
         const vq = encodeURIComponent(v.title.replace(" - Remote", "").replace(" (Full-Time)", ""));
         allJobs.push({
           id: `indeed-search-${Date.now()}-${idx}`,
-          title: `${v.title}, Data Engineer`,
+          title: v.title,
           company: companies[idx % companies.length],
           location: loc || "Worldwide",
           type: "Full-Time",
@@ -889,9 +781,7 @@ const UploadResume = () => {
   };
 
   const toggleJobTitle = (title: string) => {
-    setSelectedJobTitles(prev =>
-      prev.includes(title) ? prev.filter(t => t !== title) : [...prev, title]
-    );
+    setSelectedJobTitles(prev => (prev[0] === title ? [] : [title]));
   };
 
   const cleanDescription = (text: string) => {
@@ -937,16 +827,15 @@ const UploadResume = () => {
                 <p className="text-sm text-green-700">Your analysis and job search results are preserved while you navigate.</p>
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
                   clearAllSessionData();
+                  clearRecommendationCache();
+                  await resetResumeSession();
                   setUploadSuccess(false);
                   setAnalysisData(null);
                   setDeepAnalysis(null);
                   setResumeSkills([]);
-                  setSelectedSearchKeywords([]);
                   setMatchingJobs([]);
-                  setIndeedJobs([]);
-                  setLinkedinJobs([]);
                   setUnifiedJobs([]);
                   setUnifiedSearchDone(false);
                   setSelectedJobTitles([]);
@@ -1314,11 +1203,11 @@ const UploadResume = () => {
                         <Search size={20} className="text-emerald-600" />
                         Find Jobs Based on Your Resume
                       </h4>
-                      <p className="text-xs text-slate-500 mb-4">Select job titles suggested by AI, choose platforms, and search for real listings</p>
+                      <p className="text-xs text-slate-500 mb-4">Select a suggested job title, add a location, and search across all platforms</p>
 
                       {/* Suggested Job Titles as selectable chips */}
                       <div className="mb-4">
-                        <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Select Job Titles</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Suggested Job Titles</label>
                         <div className="flex flex-wrap gap-2">
                           {deepAnalysis.suggested_job_titles.map((title: string, i: number) => (
                             <button
@@ -1334,30 +1223,10 @@ const UploadResume = () => {
                             </button>
                           ))}
                         </div>
-                        <div className="mt-2 flex gap-2">
-                          <button onClick={() => setSelectedJobTitles([...deepAnalysis.suggested_job_titles])} className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold">Select All</button>
-                          <span className="text-xs text-slate-300">|</span>
-                          <button onClick={() => setSelectedJobTitles([])} className="text-xs text-slate-500 hover:text-slate-700 font-semibold">Clear</button>
-                        </div>
                       </div>
 
                       {/* Filters Row */}
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                        {/* Platform Selection */}
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">Platforms</label>
-                          <div className="flex items-center gap-3">
-                            <label className="flex items-center gap-1.5 cursor-pointer">
-                              <input type="checkbox" checked={unifiedPlatforms.linkedin} onChange={e => setUnifiedPlatforms(p => ({...p, linkedin: e.target.checked}))} className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
-                              <span className="text-sm font-medium text-slate-700">LinkedIn</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 cursor-pointer">
-                              <input type="checkbox" checked={unifiedPlatforms.indeed} onChange={e => setUnifiedPlatforms(p => ({...p, indeed: e.target.checked}))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                              <span className="text-sm font-medium text-slate-700">Indeed</span>
-                            </label>
-                          </div>
-                        </div>
-
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                         {/* Location */}
                         <div>
                           <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
@@ -1391,7 +1260,7 @@ const UploadResume = () => {
                         <div className="flex items-end">
                           <button
                             onClick={searchUnifiedJobs}
-                            disabled={loadingUnified || (!unifiedPlatforms.linkedin && !unifiedPlatforms.indeed) || (selectedJobTitles.length === 0 && (deepAnalysis.suggested_job_titles?.length || 0) === 0)}
+                            disabled={loadingUnified || selectedJobTitles.length === 0}
                             className="w-full px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                           >
                             {loadingUnified ? (
@@ -1406,7 +1275,7 @@ const UploadResume = () => {
                       {/* Selected count info */}
                       {selectedJobTitles.length > 0 && (
                         <p className="text-xs text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-lg inline-block">
-                          🔍 Searching for: <strong>{selectedJobTitles.join(", ")}</strong>
+                          🔍 Searching for: <strong>{selectedJobTitles[0]}</strong>
                           {unifiedLocation && <> in <strong>{unifiedLocation}</strong></>}
                         </p>
                       )}
@@ -1761,437 +1630,6 @@ const UploadResume = () => {
                 </div>
               )}
 
-              {/* ── Selectable Keywords Section ── */}
-              {resumeSkills && resumeSkills.length > 0 && (
-                <div className="mb-6 p-6 bg-cyan-50 border border-cyan-200 rounded-2xl">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                      <Sparkles size={20} className="text-cyan-600" />
-                      Select Keywords to Search Jobs
-                    </h3>
-                    <span className="text-sm font-bold text-cyan-700 bg-cyan-100 px-3 py-1 rounded-full">
-                      {selectedSearchKeywords.length} selected
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mb-4">
-                    These tech keywords were extracted from your resume by AI. They will be used to match you with HR-posted jobs on the portal.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {resumeSkills.slice(0, 20).map((skill, index) => (
-                      <button
-                        key={index}
-                        onClick={() => toggleKeyword(skill)}
-                        className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
-                          selectedSearchKeywords.includes(skill)
-                            ? "bg-cyan-600 text-white border-cyan-600 shadow-md scale-105"
-                            : "bg-white text-cyan-700 border-cyan-200 hover:bg-cyan-100 hover:border-cyan-400"
-                        }`}
-                      >
-                        {selectedSearchKeywords.includes(skill) ? "✓ " : ""}{skill}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      onClick={() => setSelectedSearchKeywords(resumeSkills.slice(0, 20))}
-                      className="px-4 py-2 text-xs bg-white border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-all"
-                    >
-                      Select All
-                    </button>
-                    <button
-                      onClick={() => setSelectedSearchKeywords([])}
-                      className="px-4 py-2 text-xs bg-white border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-all"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Search Jobs Button ── */}
-              {resumeSkills && resumeSkills.length > 0 && (
-                <div className="mb-8">
-                  <button
-                    onClick={() => {
-                      const keywords = selectedSearchKeywords.length > 0
-                        ? selectedSearchKeywords
-                        : resumeSkills.slice(0, 5);
-                      localStorage.setItem("veriresume_selected_keywords", JSON.stringify(keywords));
-                      if (resumeId) localStorage.setItem("veriresume_search_resumeid", resumeId);
-                      navigate("/jobseeker/jobs");
-                    }}
-                    className="w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-bold text-lg hover:shadow-xl transition-all flex items-center justify-center gap-3"
-                  >
-                    <Search size={20} />
-                    Search Jobs with{" "}
-                    {selectedSearchKeywords.length > 0
-                      ? `${selectedSearchKeywords.length} Selected Keyword${selectedSearchKeywords.length > 1 ? "s" : ""}`
-                      : "Resume Keywords"}
-                  </button>
-                  <p className="text-center text-xs text-slate-500 mt-2">
-                    Browse HR-posted jobs on the portal matched to your resume skills
-                  </p>
-                </div>
-              )}
-
-              {/* ── Indeed Job Search Section ── */}
-              {resumeSkills && resumeSkills.length > 0 && (
-                <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl">
-                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
-                    <Globe size={20} className="text-indigo-600" />
-                    Search Indeed Jobs
-                  </h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Search Indeed for jobs matching your selected keywords using the Indeed Scraper API.
-                  </p>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    {/* Country Select */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Country</label>
-                      <select
-                        value={indeedCountry}
-                        onChange={(e) => setIndeedCountry(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value="us">United States</option>
-                        <option value="uk">United Kingdom</option>
-                        <option value="pk">Pakistan</option>
-                        <option value="in">India</option>
-                        <option value="ca">Canada</option>
-                        <option value="au">Australia</option>
-                        <option value="de">Germany</option>
-                        <option value="ae">UAE</option>
-                      </select>
-                    </div>
-
-                    {/* Location Input */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Location (Optional)</label>
-                      <input
-                        type="text"
-                        value={indeedLocation}
-                        onChange={(e) => setIndeedLocation(e.target.value)}
-                        placeholder="e.g., New York, Remote"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    {/* Search Button */}
-                    <div className="flex items-end">
-                      <button
-                        onClick={searchIndeedJobs}
-                        disabled={loadingIndeed}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {loadingIndeed ? (
-                          <>
-                            <Loader className="animate-spin" size={16} />
-                            Searching Indeed...
-                          </>
-                        ) : (
-                          <>
-                            <Search size={16} />
-                            Search Indeed
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Indeed Results */}
-                  {loadingIndeed && (
-                    <div className="flex justify-center py-8">
-                      <div className="text-center">
-                        <Loader className="animate-spin text-indigo-600 mb-3 mx-auto" size={32} />
-                        <p className="text-sm text-slate-600 font-semibold">Searching Indeed via API...</p>
-                        <p className="text-xs text-slate-400">This may take up to a minute</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {indeedSearchDone && indeedJobs.length > 0 && (
-                    <div className="space-y-3 mt-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-bold text-slate-800">Indeed Results ({indeedJobs.length})</h4>
-                        <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">Indeed</span>
-                      </div>
-                      {indeedJobs.map((job: any, idx: number) => (
-                        <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex-1">
-                              <h5 className="text-base font-bold text-slate-900">{job.title}</h5>
-                              <p className="text-sm text-slate-600">{job.company}</p>
-                            </div>
-                            <div className="flex items-center gap-2 ml-3">
-                              {job.matchScore != null && (
-                                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
-                                  {job.matchScore}% Match
-                                </span>
-                              )}
-                              <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">Indeed</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-3 text-sm text-slate-500 mb-3">
-                            {job.location && (
-                              <span className="flex items-center gap-1">
-                                <MapPin size={14} /> {job.location}
-                              </span>
-                            )}
-                            {job.salary && (
-                              <span className="text-green-600 font-semibold">{job.salary}</span>
-                            )}
-                            {job.posted_date && (
-                              <span className="text-slate-400">• {job.posted_date}</span>
-                            )}
-                            {job.is_remote && (
-                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-medium">Remote</span>
-                            )}
-                          </div>
-
-                          {job.matchedSkills && job.matchedSkills.length > 0 && (
-                            <div className="mb-3">
-                              <div className="flex flex-wrap gap-1.5">
-                                {job.matchedSkills.map((skill: string, si: number) => (
-                                  <span key={si} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
-                                    ✓ {skill}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {job.description && (
-                            <p className="text-xs text-slate-500 mb-3 line-clamp-2">{job.description}</p>
-                          )}
-
-                          <div className="flex gap-2">
-                            {(job.applyUrl || job.url) && (
-                              <a
-                                href={job.applyUrl || job.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex-1 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg text-sm font-semibold hover:shadow-md transition-all text-center flex items-center justify-center gap-2"
-                              >
-                                <ExternalLink size={14} />
-                                Apply on Indeed
-                              </a>
-                            )}
-                            <button
-                              onClick={() => handleSaveJob(job, "Indeed")}
-                              disabled={savingJob === (job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`)}
-                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                                savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`)
-                                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              }`}
-                              title={savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
-                            >
-                              {savedJobIds.has(job.id || job.url || job.applyUrl || `Indeed-${job.title}-${job.company}`) ? (
-                                <BookmarkCheck size={16} />
-                              ) : (
-                                <BookmarkPlus size={16} />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {indeedSearchDone && indeedJobs.length === 0 && !loadingIndeed && (
-                    <div className="text-center py-6 bg-white/60 rounded-xl border border-slate-200">
-                      <p className="text-sm text-slate-500">No Indeed jobs found. Try different keywords or location.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── LinkedIn Job Search Section ── */}
-              {resumeSkills && resumeSkills.length > 0 && (
-                <div className="mb-8 p-6 bg-gradient-to-br from-sky-50 to-blue-50 border border-sky-200 rounded-2xl">
-                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
-                    <Briefcase size={20} className="text-sky-600" />
-                    Search LinkedIn Jobs
-                  </h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Search real LinkedIn job listings matching your selected keywords using the LinkedIn Job Search API.
-                  </p>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    {/* Location Input */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Location (Optional)</label>
-                      <input
-                        type="text"
-                        value={linkedinLocation}
-                        onChange={(e) => setLinkedinLocation(e.target.value)}
-                        placeholder="e.g., United States, Pakistan, Remote"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-
-                    {/* Time Range */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Posted Within</label>
-                      <select
-                        value={linkedinTimeRange}
-                        onChange={(e) => setLinkedinTimeRange(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-sky-500"
-                      >
-                        <option value="24h">Last 24 Hours</option>
-                        <option value="7d">Last 7 Days</option>
-                      </select>
-                    </div>
-
-                    {/* Search Button */}
-                    <div className="flex items-end">
-                      <button
-                        onClick={searchLinkedInJobs}
-                        disabled={loadingLinkedin}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white rounded-lg font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {loadingLinkedin ? (
-                          <>
-                            <Loader className="animate-spin" size={16} />
-                            Searching LinkedIn...
-                          </>
-                        ) : (
-                          <>
-                            <Search size={16} />
-                            Search LinkedIn
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* LinkedIn Results */}
-                  {loadingLinkedin && (
-                    <div className="flex justify-center py-8">
-                      <div className="text-center">
-                        <Loader className="animate-spin text-sky-600 mb-3 mx-auto" size={32} />
-                        <p className="text-sm text-slate-600 font-semibold">Searching LinkedIn jobs...</p>
-                        <p className="text-xs text-slate-400">Fetching real-time listings</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {linkedinSearchDone && linkedinJobs.length > 0 && (
-                    <div className="space-y-3 mt-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-bold text-slate-800">LinkedIn Results ({linkedinJobs.length})</h4>
-                        <span className="px-3 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold">LinkedIn</span>
-                      </div>
-                      {linkedinJobs.map((job: any, idx: number) => (
-                        <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex items-start gap-3 flex-1">
-                              {job.company_logo && (
-                                <img
-                                  src={job.company_logo}
-                                  alt={job.company}
-                                  className="w-10 h-10 rounded-lg object-cover border border-slate-200 flex-shrink-0"
-                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                />
-                              )}
-                              <div>
-                                <h5 className="text-base font-bold text-slate-900">{job.title}</h5>
-                                <p className="text-sm text-slate-600">{job.company}</p>
-                                {job.company_industry && (
-                                  <p className="text-xs text-slate-400">{job.company_industry} · {job.company_size}</p>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 ml-3">
-                              {job.matchScore != null && (
-                                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
-                                  {job.matchScore}% Match
-                                </span>
-                              )}
-                              <span className="px-2 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold">LinkedIn</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-3 text-sm text-slate-500 mb-3 flex-wrap">
-                            {job.location && (
-                              <span className="flex items-center gap-1">
-                                <MapPin size={14} /> {job.location}
-                              </span>
-                            )}
-                            {job.salary && (
-                              <span className="text-green-600 font-semibold">{job.salary}</span>
-                            )}
-                            {job.seniority && job.seniority !== 'null' && (
-                              <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium">{job.seniority}</span>
-                            )}
-                            {job.is_remote && (
-                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-medium">Remote</span>
-                            )}
-                            {job.posted_date && (
-                              <span className="text-slate-400">• {job.posted_date}</span>
-                            )}
-                          </div>
-
-                          {job.matchedSkills && job.matchedSkills.length > 0 && (
-                            <div className="mb-3">
-                              <div className="flex flex-wrap gap-1.5">
-                                {job.matchedSkills.map((skill: string, si: number) => (
-                                  <span key={si} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
-                                    ✓ {skill}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {job.description && (
-                            <p className="text-xs text-slate-500 mb-3 line-clamp-2">{job.description}</p>
-                          )}
-
-                          <div className="flex gap-2">
-                            {(job.applyUrl || job.url) && (
-                              <a
-                                href={job.applyUrl || job.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex-1 px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white rounded-lg text-sm font-semibold hover:shadow-md transition-all text-center flex items-center justify-center gap-2"
-                              >
-                                <ExternalLink size={14} />
-                                {job.direct_apply ? 'Apply Directly' : 'View on LinkedIn'}
-                              </a>
-                            )}
-                            <button
-                              onClick={() => handleSaveJob(job, "LinkedIn")}
-                              disabled={savingJob === (job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`)}
-                              className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                                savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`)
-                                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              }`}
-                              title={savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
-                            >
-                              {savedJobIds.has(job.id || job.url || job.applyUrl || `LinkedIn-${job.title}-${job.company}`) ? (
-                                <BookmarkCheck size={16} />
-                              ) : (
-                                <BookmarkPlus size={16} />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {linkedinSearchDone && linkedinJobs.length === 0 && !loadingLinkedin && (
-                    <div className="text-center py-6 bg-white/60 rounded-xl border border-slate-200">
-                      <p className="text-sm text-slate-500">No LinkedIn jobs found. Try different keywords or a wider time range.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* Weaknesses & Suggestions */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                 {/* Weaknesses */}
@@ -2233,100 +1671,6 @@ const UploadResume = () => {
 
 
 
-              {/* Matching Jobs Section */}
-              {loadingJobs && (
-                <div className="flex justify-center py-12">
-                  <div className="text-center">
-                    <div className="inline-block">
-                      <Loader className="animate-spin text-blue-600 mb-4" size={40} />
-                    </div>
-                    <p className="text-slate-600 font-semibold">Finding matching jobs from multiple platforms...</p>
-                  </div>
-                </div>
-              )}
-
-              {matchingJobs.length > 0 && !loadingJobs && (
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-900 mb-6">Matching Jobs Found ({matchingJobs.length})</h3>
-                  <div className="space-y-4">
-                    {matchingJobs.map((job: any, index: number) => (
-                      <div key={index} className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-lg transition-all">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex-1">
-                            <h4 className="text-lg font-bold text-slate-900">{job.title}</h4>
-                            <p className="text-sm text-slate-600">{job.company}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">
-                              {job.matchScore || job.match_score || 0}% Match
-                            </span>
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                              (job.source || job.platform || '').toLowerCase() === 'indeed' ? 'bg-indigo-100 text-indigo-700' :
-                              (job.source || job.platform || '').toLowerCase() === 'remotive' ? 'bg-blue-100 text-blue-700' :
-                              (job.source || job.platform || '').toLowerCase() === 'jobicy' ? 'bg-purple-100 text-purple-700' :
-                              (job.source || job.platform || '').toLowerCase() === 'arbeitnow' ? 'bg-teal-100 text-teal-700' :
-                              (job.source || job.platform || '').toLowerCase() === 'usajobs' ? 'bg-red-100 text-red-700' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>
-                              {(job.source || job.platform || 'Job Site').charAt(0).toUpperCase() + (job.source || job.platform || 'Job Site').slice(1)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4 text-sm text-slate-600 mb-3">
-                          <span className="flex items-center gap-1">📍 {job.location}</span>
-                          {job.postedDate && <span className="text-slate-400">• {job.postedDate}</span>}
-                        </div>
-                        {job.matchedSkills && job.matchedSkills.length > 0 && (
-                          <div className="mb-3">
-                            <p className="text-xs text-slate-500 font-semibold mb-2">Matched Skills:</p>
-                            <div className="flex flex-wrap gap-2">
-                              {job.matchedSkills.map((skill: string, i: number) => (
-                                <span key={i} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">
-                                  ✓ {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="flex gap-2 mt-4">
-                          {job.url && (
-                            <a
-                              href={job.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg text-sm font-semibold hover:shadow-md transition-all text-center"
-                            >
-                              Apply Now →
-                            </a>
-                          )}
-                          <button
-                            onClick={() => handleSaveJob(job, job.source || job.platform || "Job Site")}
-                            disabled={savingJob === (job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`)}
-                            className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                              savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`)
-                                ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                            }`}
-                            title={savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`) ? "Unsave" : "Save Job"}
-                          >
-                            {savedJobIds.has(job.id || job.url || `${(job.source || 'match')}-${job.title}-${job.company}`) ? (
-                              <BookmarkCheck size={16} />
-                            ) : (
-                              <BookmarkPlus size={16} />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {!loadingJobs && matchingJobs.length === 0 && (
-                <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-200">
-                  <p className="text-slate-600">No matching jobs found yet. Try adjusting your resume or search criteria.</p>
-                </div>
-              )}
             </div>
           )}
 

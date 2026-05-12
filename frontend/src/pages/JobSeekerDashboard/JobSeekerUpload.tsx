@@ -23,6 +23,13 @@ import { useAuth } from "../../context/AuthContext";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
+const clearRecommendationCache = () => {
+  localStorage.removeItem('veriresume_cached_jobs');
+  localStorage.removeItem('veriresume_jobs_timestamp');
+  localStorage.removeItem('veriresume_selected_keywords');
+  localStorage.removeItem('veriresume_search_resumeid');
+};
+
 interface AIAnalysis {
   atsScore: number;
   keywordDensity: number;
@@ -92,8 +99,10 @@ const JobSeekerUpload = () => {
     setUploading(true);
     setError("");
     setSuccess("");
+    setResumeData(null);
     setRecommendedJobs([]);
     setRecommendedKeywords([]);
+    clearRecommendationCache();
 
     try {
       const formData = new FormData();

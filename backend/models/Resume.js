@@ -53,7 +53,88 @@ const ResumeSchema = new mongoose.Schema(
       detectedAt: Date
     },
     enhancedFile: { type: String }, // path to AI-enhanced resume
+    enhancedResume: mongoose.Schema.Types.Mixed, // persisted AI-enhanced resume JSON
+    enhancedMeta: {
+      provider: String,
+      generatedAt: Date,
+      jdUpdatedAt: Date,
+      baseAtsScore: Number,
+      estimatedNewAtsScore: Number,
+    },
     jobTarget: { type: String }, // e.g., "Frontend Developer"
+    module3Result: mongoose.Schema.Types.Mixed,
+    jobDescription: {
+      text: String,
+      fileName: String,
+      updatedAt: Date,
+    },
+    jdAnalysis: {
+      atsMatchScore: Number,
+      matchLabel: String,
+      alignment: {
+        skills: Number,
+        keywords: Number,
+        experience: Number,
+        education: Number,
+        tools: Number,
+        responsibilities: Number,
+      },
+      matchedKeywords: [String],
+      missingKeywords: [String],
+      missingSkills: [String],
+      missingCertifications: [String],
+      missingResponsibilities: [String],
+      missingTools: [String],
+      weaknesses: [String],
+      recommendations: [String],
+      summary: String,
+      generatedAt: Date,
+    },
+    interviewPrep: {
+      readinessScore: Number,
+      focusAreas: [String],
+      questions: [
+        {
+          id: String,
+          type: String,
+          level: String,
+          question: String,
+          focusArea: String,
+        },
+      ],
+      generatedAt: Date,
+    },
+    mockInterview: {
+      level: String,
+      currentIndex: { type: Number, default: 0 },
+      questions: [
+        {
+          id: String,
+          type: String,
+          level: String,
+          question: String,
+          focusArea: String,
+        },
+      ],
+      history: [
+        {
+          questionId: String,
+          question: String,
+          answer: String,
+          evaluation: {
+            score: Number,
+            confidence: Number,
+            accuracy: Number,
+            clarity: Number,
+            completeness: Number,
+            feedback: String,
+            improvedAnswer: String,
+          },
+          evaluatedAt: Date,
+        },
+      ],
+      startedAt: Date,
+    },
     
     // Decision Status Fields
     decisionStatus: { type: String, enum: ['SHORTLISTED', 'NEEDS_REVIEW', 'REJECTED', 'SHORTLISTED_WITH_FLAG', 'PENDING'], default: 'PENDING' },

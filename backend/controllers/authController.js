@@ -36,7 +36,17 @@ import { generateOTP, sendOTPEmail, sendPasswordResetEmail } from '../utils/emai
 const getJwtSecret = () => process.env.JWT_SECRET || 'devsecret';
 
 export const signup = async (req, res) => {
-  const { email, password, name, role } = req.body;
+  const {
+    email,
+    password,
+    name,
+    role,
+    companyName,
+    companyLogoUrl,
+    companyDescription,
+    companyWebsite,
+    companyLocation,
+  } = req.body;
   try {
     const exists = await User.findOne({ email });
     if (exists) return res.status(400).json({ message: 'User already exists' });
@@ -45,15 +55,33 @@ export const signup = async (req, res) => {
     const otp = generateOTP();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     
-    const user = await User.create({ 
-      email, 
-      password, 
+    const normalizedRole = role || "jobseeker";
+    const hasCompanyProfile = Boolean(
+      companyName || companyLogoUrl || companyDescription || companyWebsite || companyLocation
+    );
+
+    const userPayload = {
+      email,
+      password,
       name,
-      role: role || "jobseeker",
+      role: normalizedRole,
       emailVerificationOTP: otp,
       otpExpires: otpExpires,
-      isEmailVerified: false
-    });
+      isEmailVerified: false,
+    };
+
+    if (normalizedRole === "hr" && hasCompanyProfile) {
+      userPayload.company = companyName || "";
+      userPayload.companyProfile = {
+        name: companyName || "",
+        logoUrl: companyLogoUrl || "",
+        description: companyDescription || "",
+        website: companyWebsite || "",
+        location: companyLocation || "",
+      };
+    }
+
+    const user = await User.create(userPayload);
     
     // Send OTP email
     const emailResult = await sendOTPEmail(email, otp, name);

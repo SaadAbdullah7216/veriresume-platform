@@ -1,6 +1,24 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type User = { id: string; email: string; name?: string; avatar?: string; role?: string; isPremium?: boolean; premiumExpiresAt?: string } | null;
+type CompanyProfile = {
+  name?: string;
+  logoUrl?: string;
+  description?: string;
+  website?: string;
+  location?: string;
+};
+
+type User = {
+  id: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  role?: string;
+  company?: string;
+  companyProfile?: CompanyProfile | null;
+  isPremium?: boolean;
+  premiumExpiresAt?: string;
+} | null;
 
 type AuthContextType = {
   user: User;
@@ -33,7 +51,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       console.log('[AuthContext] User fetched:', data);
-      setUser({ id: data.id, email: data.email, name: data.name, avatar: data.avatar, role: data.role, isPremium: data.isPremium, premiumExpiresAt: data.premiumExpiresAt });
+      setUser({
+        id: data.id,
+        email: data.email,
+        name: data.name,
+        avatar: data.avatar,
+        role: data.role,
+        company: data.company,
+        companyProfile: data.companyProfile || null,
+        isPremium: data.isPremium,
+        premiumExpiresAt: data.premiumExpiresAt,
+      });
     } catch (err) {
       console.error('[AuthContext] Error fetching user:', err);
       localStorage.removeItem('token');

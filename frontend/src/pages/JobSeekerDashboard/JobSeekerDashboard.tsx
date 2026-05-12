@@ -13,10 +13,7 @@ import {
   ChevronRight,
   Zap,
   BarChart3,
-  Globe,
   Loader,
-  ExternalLink,
-  MapPin,
   TrendingUp,
   Award,
   Crown,
@@ -31,7 +28,7 @@ const JobSeekerDashboard = () => {
   const [resumeData, setResumeData] = useState<any>(null);
   const [matchingJobs, setMatchingJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [jobsLoading, setJobsLoading] = useState(false);
+  const [, setJobsLoading] = useState(false);
 
   const userName = user?.name || "User";
 
@@ -338,76 +335,6 @@ const JobSeekerDashboard = () => {
           </div>
         </div>
       )}
-
-      {/* Job Matches Preview */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200 mb-8">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <Globe className="text-cyan-600" size={24} /> Jobs Matching Your Resume
-          </h2>
-          <button onClick={() => navigate("/jobseeker/jobs")} className="px-4 py-2 bg-cyan-100 text-cyan-700 rounded-lg font-semibold hover:bg-cyan-200 transition-all text-sm flex items-center gap-1">
-            View All <ChevronRight size={16} />
-          </button>
-        </div>
-
-        {!hasResume ? (
-          <div className="text-center py-12 bg-blue-50 rounded-xl border-2 border-blue-200">
-            <Upload size={40} className="mx-auto text-blue-400 mb-3" />
-            <p className="text-slate-600 font-bold text-lg">No Resume Found</p>
-            <button onClick={() => navigate("/jobseeker/upload")} className="mt-4 px-6 py-2 bg-cyan-600 text-white rounded-lg font-semibold hover:bg-cyan-700 transition-all">Upload Your Resume</button>
-          </div>
-        ) : jobsLoading ? (
-          <div className="flex flex-col items-center justify-center py-16 bg-gradient-to-br from-cyan-50 to-blue-50 rounded-xl border-2 border-dashed border-cyan-300">
-            <Loader size={50} className="text-cyan-600 animate-spin mb-4" />
-            <p className="text-slate-600 font-bold text-lg">Searching jobs across platforms...</p>
-          </div>
-        ) : matchingJobs.length === 0 ? (
-          <div className="text-center py-12 bg-amber-50 rounded-xl border-2 border-amber-200">
-            <AlertCircle size={40} className="mx-auto text-amber-500 mb-3" />
-            <p className="text-slate-600 font-bold">No jobs found yet</p>
-            <button onClick={() => resumeData && fetchMatchingJobs(resumeData._id)} className="mt-4 px-6 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700 transition-all">Refresh</button>
-          </div>
-        ) : (() => {
-          // Deduplicate jobs by normalized title + company
-          const seen = new Set<string>();
-          const uniqueJobs = matchingJobs.filter((job: any) => {
-            const key = `${(job.title || '').toLowerCase().trim()}|${(job.company || '').toLowerCase().trim()}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-          return (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {uniqueJobs.slice(0, 6).map((job: any, idx: number) => {
-              const platform = (job.source || job.platform || 'unknown').toLowerCase();
-              const platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
-              const platformColor = platform === 'indeed' ? 'bg-indigo-100 text-indigo-700' :
-                platform === 'glassdoor' ? 'bg-emerald-100 text-emerald-700' :
-                platform === 'remotive' ? 'bg-blue-100 text-blue-700' :
-                platform === 'jobicy' ? 'bg-purple-100 text-purple-700' :
-                platform === 'arbeitnow' ? 'bg-teal-100 text-teal-700' :
-                platform === 'usajobs' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600';
-              return (
-                <a key={idx} href={job.url || "#"} target="_blank" rel="noopener noreferrer" className="border border-slate-200 rounded-xl p-4 hover:border-cyan-400 hover:shadow-lg transition-all group">
-                  <div className="flex items-start justify-between mb-2">
-                    <h4 className="font-bold text-slate-900 group-hover:text-cyan-600 text-sm flex-1">{job.title}</h4>
-                    <ExternalLink size={14} className="text-slate-400 group-hover:text-cyan-600 flex-shrink-0 ml-2" />
-                  </div>
-                  <p className="text-slate-600 text-xs mb-2">{job.company}</p>
-                  <div className="flex items-center gap-1 text-xs text-slate-500 mb-3">
-                    <MapPin size={12} /><span>{job.location}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-semibold text-cyan-600">{job.matchScore || 0}% Match</span>
-                    <span className={`text-xs px-2 py-1 rounded-full font-semibold ${platformColor}`}>{platformLabel}</span>
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-          );
-        })()}
-      </div>
 
       {/* Premium CTA */}
       {!user?.isPremium && (

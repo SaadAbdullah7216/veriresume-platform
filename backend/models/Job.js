@@ -13,6 +13,10 @@ const JobSchema = new mongoose.Schema(
     company: { type: String, required: true },
     description: { type: String, required: true },
     location: { type: String, required: true },
+    companyLogoUrl: { type: String },
+    companyDescription: { type: String },
+    companyWebsite: { type: String },
+    companyLocation: { type: String },
     
     // Salary information
     salary: { type: String, default: 'Competitive' },
