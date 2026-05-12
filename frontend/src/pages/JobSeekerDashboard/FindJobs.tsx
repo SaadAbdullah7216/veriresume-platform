@@ -385,8 +385,9 @@ const FindJobs = () => {
   };
 
   const handleApply = (job: JSearchJob) => {
-    if (job.applyUrl && job.applyUrl !== "#") {
-      window.open(job.applyUrl, "_blank", "noopener,noreferrer");
+    const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || "#";
+    if (applyLink && applyLink !== "#") {
+      window.open(applyLink, "_blank", "noopener,noreferrer");
     }
   };
 
