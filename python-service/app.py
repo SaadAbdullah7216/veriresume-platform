@@ -1335,15 +1335,15 @@ def hr_bulk_screen_resumes():
         # Get requirements (optional)
         requirements = request.form.get('requirements', '')
         
-        # Get anomaly threshold (default: 30)
-        anomaly_threshold = int(request.form.get('anomalyThreshold', 30))
+        # Get ats threshold (default: 60)
+        ats_threshold = int(request.form.get('atsThreshold', 60))
         
         print(f"\n{'='*70}")
         print(f"🔍 BULK RESUME SCREENING STARTED")
         print(f"{'='*70}")
         print(f"📄 Resumes uploaded: {len(files)}")
         print(f"🎯 Job description provided: {len(job_description)} characters")
-        print(f"⚖️  Anomaly threshold: {anomaly_threshold}")
+        print(f"⚖️  ATS threshold: {ats_threshold}")
         print(f"{'-'*70}\n")
         
         shortlisted_candidates = []
@@ -1372,24 +1372,21 @@ def hr_bulk_screen_resumes():
                 
                 print(f"  ✓ Anomaly weight: {anomaly_weight}")
                 
-                # Check if should be shortlisted
-                shortlist_decision = anomaly_detector_module.should_shortlist(
-                    anomalies, 
-                    threshold=anomaly_threshold
-                )
+                # Calculate match score with job description first
+                if hr_system:
+                    ats_results = hr_system.analyzer.calculate_ats_score(
+                        parsed_data, 
+                        job_description
+                    )
+                    match_score = ats_results.get('ats_score', 0)
+                else:
+                    match_score = 50  # Default if HR system unavailable
+                    ats_results = {}
                 
-                if shortlist_decision['shortlisted']:
-                    # Calculate match score with job description
-                    if hr_system:
-                        ats_results = hr_system.analyzer.calculate_ats_score(
-                            parsed_data, 
-                            job_description
-                        )
-                        match_score = ats_results.get('ats_score', 0)
-                    else:
-                        match_score = 50  # Default if HR system unavailable
-                    
-                    print(f"  ✓ Match score: {match_score}")
+                print(f"  ✓ Match score: {match_score}")
+                
+                # Check if should be shortlisted based on ATS threshold
+                if match_score >= ats_threshold:
                     print(f"  ✅ SHORTLISTED\n")
                     
                     shortlisted_candidates.append({
@@ -1398,25 +1395,26 @@ def hr_bulk_screen_resumes():
                         'phone': parsed_data.get('candidate_info', {}).get('phone', ''),
                         'match_score': match_score,
                         'anomaly_weight': anomaly_weight,
-                        'anomaly_status': shortlist_decision['decision'],
+                        'anomaly_status': 'SHORTLISTED',
                         'anomaly_severity': anomalies.get('severity', 'none'),
                         'parsed_data': parsed_data,
                         'anomaly_detection': anomalies,
-                        'analysis': ats_results if hr_system else {},
+                        'analysis': ats_results,
                         'file_name': file.filename
                     })
                 else:
-                    print(f"  ❌ REJECTED: {shortlist_decision['reason']}\n")
+                    print(f"  ❌ REJECTED: ATS Score ({match_score}%) below threshold ({ats_threshold}%)\n")
                     
                     rejected_candidates.append({
                         'candidate_name': candidate_name,
                         'email': candidate_email,
                         'phone': parsed_data.get('candidate_info', {}).get('phone', ''),
+                        'match_score': match_score,
                         'anomaly_weight': anomaly_weight,
-                        'anomaly_status': shortlist_decision['decision'],
+                        'anomaly_status': 'REJECTED',
                         'anomaly_severity': anomalies.get('severity', 'high'),
-                        'rejection_reason': shortlist_decision['reason'],
-                        'recommendation': shortlist_decision['recommendation'],
+                        'rejection_reason': f"ATS Score ({match_score}%) does not meet the minimum requirement ({ats_threshold}%)",
+                        'recommendation': "Improve keyword matching and resume formatting.",
                         'anomaly_detection': anomalies,
                         'file_name': file.filename
                     })
@@ -1455,7 +1453,7 @@ def hr_bulk_screen_resumes():
                 'shortlisted': len(shortlisted_candidates),
                 'rejected': len(rejected_candidates),
                 'errors': len(processing_errors),
-                'anomaly_threshold': anomaly_threshold,
+                'ats_threshold': ats_threshold,
                 'shortlisted_candidates': shortlisted_candidates,
                 'rejected_candidates': rejected_candidates,
                 'processing_errors': processing_errors if processing_errors else None
@@ -1941,15 +1939,24 @@ def deep_analyze_resume():
         if not resume_text or len(resume_text.strip()) < 50:
             return jsonify({'success': False, 'error': 'Resume text is required (min 50 chars)'}), 400
 
-        groq_key = os.getenv('GROQ_API_KEY', '')
-        gemini_key = os.getenv('GEMINI_API_KEY', '')
-
-        if not groq_key and not gemini_key:
-            return jsonify({'success': False, 'error': 'No AI API keys configured (need GROQ_API_KEY or GEMINI_API_KEY)'}), 500
+        # Keys from request body (Node backend .env) take precedence — Python's load_dotenv
+        # often loads only python-service/.env, not backend/.env.
+        groq_key = (
+            data.get('groqApiKey')
+            or data.get('groq_api_key')
+            or os.getenv('GROQ_API_KEY', '')
+        )
+        gemini_key = (
+            data.get('geminiApiKey')
+            or data.get('gemini_api_key')
+            or os.getenv('GEMINI_API_KEY', '')
+        )
 
         print(f"\n{'='*60}")
         print(f"[DEEP-ANALYZE] Starting deep resume analysis ({len(resume_text)} chars)")
         print(f"[DEEP-ANALYZE] Providers: Groq={'Yes' if groq_key else 'No'}, Gemini={'Yes' if gemini_key else 'No'}")
+        if not groq_key and not gemini_key:
+            print("[DEEP-ANALYZE] No API keys — using heuristic ATS / keyword fallback (Groq/Gemini optional)")
         print(f"{'='*60}")
 
         if not analyze_resume_deep:

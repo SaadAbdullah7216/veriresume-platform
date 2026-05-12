@@ -14,37 +14,84 @@ def analyze_resume_deep(resume_text, groq_key='', gemini_key='', **kwargs):
     text = str(resume_text or '')
     normalized = text.lower()
 
-    keyword_patterns = [
-        ('Python', r'\bpython\b'),
-        ('Java', r'\bjava\b'),
-        ('JavaScript', r'\bjavascript\b|\bnode\.js\b'),
-        ('TypeScript', r'\btypescript\b'),
-        ('Django', r'\bdjango\b'),
-        ('Flask', r'\bflask\b'),
-        ('React', r'\breact\b'),
-        ('SQL', r'\bsql\b|\bpostgresql\b|\bmysql\b'),
-        ('AWS', r'\baws\b'),
-        ('Docker', r'\bdocker\b'),
-        ('Kubernetes', r'\bkubernetes\b|\bk8s\b'),
-        ('Git', r'\bgit\b'),
-    ]
-
-    recommended_job_keywords = [
-        keyword for keyword, pattern in keyword_patterns if re.search(pattern, normalized)
-    ]
-
     suggested_job_titles = []
-    if 'python' in normalized:
-        suggested_job_titles.append('Python Developer')
-    if 'django' in normalized or 'flask' in normalized:
-        suggested_job_titles.append('Backend Engineer')
-    if 'react' in normalized or 'javascript' in normalized or 'typescript' in normalized:
-        suggested_job_titles.append('Frontend Developer')
-    if 'data' in normalized or 'machine learning' in normalized:
-        suggested_job_titles.append('Data Engineer')
+    recommended_job_keywords = []
 
-    if not suggested_job_titles and ('engineer' in normalized or 'developer' in normalized):
-        suggested_job_titles.append('Software Engineer')
+    # Attempt Groq API first
+    if groq_key and text:
+        import requests
+        try:
+            prompt = f"Based on the following resume text, provide 2 to 4 suggested job titles that perfectly match the candidate's skills and experience. Also provide 5 to 8 recommended keywords for ATS optimization. Reply strictly in valid JSON format: {{\\"titles\\": [\\"Job Title 1\\"], \\"keywords\\": [\\"Keyword 1\\"]}}\\n\\nResume text: {text[:4000]}"
+            headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+            data = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3
+            }
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers, timeout=15)
+            if res.status_code == 200:
+                import json
+                content = res.json()["choices"][0]["message"]["content"]
+                parsed = json.loads(content)
+                suggested_job_titles = parsed.get("titles", [])
+                recommended_job_keywords = parsed.get("keywords", [])
+        except Exception as e:
+            print("Groq API error:", e)
+
+    # Fallback to Gemini API if Groq fails or is not available
+    if not suggested_job_titles and gemini_key and text:
+        import requests
+        try:
+            prompt = f"Based on the following resume text, provide 2 to 4 suggested job titles that perfectly match the candidate's skills and experience. Also provide 5 to 8 recommended keywords for ATS optimization. Reply strictly in valid JSON format: {{\\"titles\\": [\\"Job Title 1\\"], \\"keywords\\": [\\"Keyword 1\\"]}}\\n\\nResume text: {text[:4000]}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            data = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}
+            }
+            res = requests.post(url, json=data, timeout=15)
+            if res.status_code == 200:
+                import json
+                content = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                parsed = json.loads(content)
+                suggested_job_titles = parsed.get("titles", [])
+                recommended_job_keywords = parsed.get("keywords", [])
+        except Exception as e:
+            print("Gemini API error:", e)
+
+    # Final fallback to heuristics
+    if not suggested_job_titles:
+        keyword_patterns = [
+            ('Python', r'\bpython\b'),
+            ('Java', r'\bjava\b'),
+            ('JavaScript', r'\bjavascript\b|\bnode\.js\b'),
+            ('TypeScript', r'\btypescript\b'),
+            ('Django', r'\bdjango\b'),
+            ('Flask', r'\bflask\b'),
+            ('React', r'\breact\b'),
+            ('SQL', r'\bsql\b|\bpostgresql\b|\bmysql\b'),
+            ('AWS', r'\baws\b'),
+            ('Docker', r'\bdocker\b'),
+            ('Kubernetes', r'\bkubernetes\b|\bk8s\b'),
+            ('Git', r'\bgit\b'),
+        ]
+
+        recommended_job_keywords = [
+            keyword for keyword, pattern in keyword_patterns if re.search(pattern, normalized)
+        ]
+
+        if 'python' in normalized:
+            suggested_job_titles.append('Python Developer')
+        if 'django' in normalized or 'flask' in normalized:
+            suggested_job_titles.append('Backend Engineer')
+        if 'react' in normalized or 'javascript' in normalized or 'typescript' in normalized:
+            suggested_job_titles.append('Frontend Developer')
+        if 'data' in normalized or 'machine learning' in normalized:
+            suggested_job_titles.append('Data Engineer')
+
+        if not suggested_job_titles and ('engineer' in normalized or 'developer' in normalized):
+            suggested_job_titles.append('Software Engineer')
+
 
     ats_score = 55
     if text:

@@ -30,6 +30,33 @@ const router = express.Router();
 // Python AI Service URL
 const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:5001';
 
+/** Set of Resume _id strings an HR user may access: own uploads + job seekers who applied (Application) only. */
+async function getHrAccessibleResumeIds(hrUserId) {
+  const [uploaded, apps] = await Promise.all([
+    Resume.find({ user: hrUserId }).select('_id').lean(),
+    Application.find({ hr: hrUserId }).select('resume').lean(),
+  ]);
+  const set = new Set();
+  uploaded.forEach((r) => set.add(r._id.toString()));
+  apps.forEach((a) => {
+    if (a.resume) set.add(a.resume.toString());
+  });
+  return set;
+}
+
+/** Map client resume id strings to ObjectIds; skips invalid ids. */
+function resumeIdStringsToObjectIds(ids) {
+  const out = [];
+  for (const id of ids) {
+    try {
+      out.push(new ObjectId(id));
+    } catch {
+      console.warn(`   ⚠️ Invalid resume ID format: ${id}`);
+    }
+  }
+  return out;
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -481,8 +508,9 @@ router.post('/jobseeker/upload-resume', authMiddleware, upload.single('resume'),
 
 /**
  * POST /api/jobseeker/reset-resume-session
- * Clears ALL resume-related data for the current user (so "New Upload" starts fresh).
- * This is intentionally destructive: deletes resumes, matches, interview prep, module3, enhanced outputs, and saved-job/search artifacts.
+ * Clears resume-analysis data for the current user (so "New Upload" starts fresh).
+ * This clears resumes, matches, interview prep, module3, and enhanced outputs.
+ * NOTE: Saved jobs and job alerts are intentionally preserved — they are persistent user data.
  */
 router.post('/jobseeker/reset-resume-session', authMiddleware, async (req, res) => {
   try {
@@ -495,9 +523,8 @@ router.post('/jobseeker/reset-resume-session', authMiddleware, async (req, res) 
     const deletedResumes = await Resume.deleteMany({ user: userId });
     const deletedMatches = resumeIds.length > 0 ? await Match.deleteMany({ resume: { $in: resumeIds } }) : { deletedCount: 0 };
 
-    // Per requirements: clear job recommendation artifacts and saved jobs
-    const deletedSavedJobs = await SavedJob.deleteMany({ user: userId });
-    const deletedJobAlerts = await JobAlert.deleteMany({ user: userId });
+    // NOTE: SavedJob and JobAlert are NOT cleared here.
+    // They are persistent user bookmarks that must survive resume re-uploads.
 
     res.json({
       success: true,
@@ -505,8 +532,6 @@ router.post('/jobseeker/reset-resume-session', authMiddleware, async (req, res) 
       data: {
         deletedResumes: deletedResumes.deletedCount || 0,
         deletedMatches: deletedMatches.deletedCount || 0,
-        deletedSavedJobs: deletedSavedJobs.deletedCount || 0,
-        deletedJobAlerts: deletedJobAlerts.deletedCount || 0,
       },
     });
   } catch (error) {
@@ -1016,9 +1041,20 @@ router.post('/hr/detect-anomalies', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'No resume IDs provided' });
     }
 
+    const hrUserId = req.user._id;
+    const hrVisibleResumeIds = await getHrAccessibleResumeIds(hrUserId);
+    const allowedResumeIds = resumeIds.filter((id) => hrVisibleResumeIds.has(String(id)));
+
+    if (allowedResumeIds.length === 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'No selected resumes belong to your account or a VeriResume application for your jobs.',
+      });
+    }
+
     const anomalyReports = [];
 
-    for (const resumeId of resumeIds) {
+    for (const resumeId of allowedResumeIds) {
       const resume = await Resume.findById(resumeId);
       
       if (!resume) continue;
@@ -1064,6 +1100,7 @@ router.post('/hr/detect-anomalies', authMiddleware, async (req, res) => {
         // Save anomaly report
         const report = new AnomalyReport({
           resume: resumeId,
+          reportedBy: hrUserId,
           riskScore: anomalyData.riskScore || 0,
           riskLevel: anomalyData.riskLevel || 'Low',
           indicators: indicatorStrings,
@@ -1105,10 +1142,21 @@ router.post('/hr/rank-resumes', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'No resume IDs provided' });
     }
 
+    const hrUserId = req.user._id;
+    const hrVisibleResumeIds = await getHrAccessibleResumeIds(hrUserId);
+    const allowedResumeIds = resumeIds.filter((id) => hrVisibleResumeIds.has(String(id)));
+
+    if (allowedResumeIds.length === 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'No selected resumes belong to your account or a VeriResume application for your jobs.',
+      });
+    }
+
     // Prepare resumes for ranking
     const resumesData = [];
 
-    for (const resumeId of resumeIds) {
+    for (const resumeId of allowedResumeIds) {
       const resume = await Resume.findById(resumeId);
       
       if (!resume) continue;
@@ -1239,7 +1287,15 @@ router.get('/hr/all-resumes', authMiddleware, async (req, res) => {
  */
 router.get('/hr/anomaly-reports', authMiddleware, async (req, res) => {
   try {
-    const reports = await AnomalyReport.find().populate('resume').sort({ createdAt: -1 });
+    const userId = req.user._id;
+    const allowed = await getHrAccessibleResumeIds(userId);
+    if (allowed.size === 0) {
+      return res.json({ success: true, data: [] });
+    }
+    const allowedOids = [...allowed].map((id) => new ObjectId(id));
+    const reports = await AnomalyReport.find({ resume: { $in: allowedOids } })
+      .populate('resume')
+      .sort({ createdAt: -1 });
     res.json({ success: true, data: reports });
   } catch (error) {
     console.error('Get anomaly reports error:', error);
@@ -1682,47 +1738,51 @@ router.post('/hr/run-ai-screening', authMiddleware, async (req, res) => {
 
     console.log(`🔍 AI SCREENING: ATS=${atsThreshold}%, Anomaly=${anomalyThreshold}, Match=${matchThreshold}%, Resumes=${resumeIds ? resumeIds.length : 'all'}`);
 
-    // Build query for resumes
-    let query = {};
+    const hrVisibleResumeIds = await getHrAccessibleResumeIds(userId);
 
-    // If specific resume IDs are provided, process those (allow reprocessing)
+    let resumes;
+
     if (resumeIds && Array.isArray(resumeIds) && resumeIds.length > 0) {
-      // Convert string IDs to MongoDB ObjectId if needed
-      const objectIds = resumeIds.map(id => {
-        try {
-          return new ObjectId(id);
-        } catch (e) {
-          console.warn(`   ⚠️ Invalid resume ID format: ${id}`);
-          return id;
-        }
-      });
-      query._id = { $in: objectIds };
-      console.log(`   Query mode: SELECTED RESUMES (allow reprocessing)`);
-      console.log(`   Converted IDs:`, objectIds);
+      const objectIdsRaw = resumeIdStringsToObjectIds(resumeIds);
+      const filteredIds = objectIdsRaw.filter((oid) =>
+        hrVisibleResumeIds.has(oid.toString())
+      );
+
+      console.log(`   Query mode: SELECTED RESUMES (must be your uploads or VeriResume applicants)`);
+
+      if (filteredIds.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error:
+            'No selected resumes belong to your account or a VeriResume application for your jobs.',
+        });
+      }
+
+      resumes = await Resume.find({ _id: { $in: filteredIds } });
     } else {
-      // Only filter by atsScore when processing all resumes (not specific IDs)
-      query.user = userId;
-      query['aiAnalysis.atsScore'] = 0;
-      console.log(`   Query mode: ALL PENDING RESUMES`);
+      const allowedOidList = [...hrVisibleResumeIds].map((id) => new ObjectId(id));
+      console.log(`   Query mode: ALL PENDING RESUMES (your uploads + applicants, ATS not yet screened)`);
+
+      resumes =
+        allowedOidList.length > 0
+          ? await Resume.find({
+              _id: { $in: allowedOidList },
+              'aiAnalysis.atsScore': 0,
+            })
+          : [];
     }
 
-    console.log(`   Final Query:`, JSON.stringify(query));
-
-    // Get resumes to process
-    const resumes = await Resume.find(query);
     console.log(`   Found ${resumes.length} resumes in database`);
-    
-    // Log details of found resumes
     if (resumes.length > 0) {
       resumes.forEach((resume, idx) => {
         console.log(`   [${idx + 1}] Resume: ${resume.originalFile}, User: ${resume.user}, ID: ${resume._id}`);
       });
-    } else {
-      // Diagnostic: Check if resumes exist with these IDs at all
+    } else if (resumeIds?.length > 0) {
       console.log(`   🔍 DIAGNOSTIC: Checking if resumes exist with these IDs...`);
-      const allResumesWithIds = await Resume.find({ _id: { $in: resumeIds.map(id => new ObjectId(id)) } });
-      console.log(`   Found ${allResumesWithIds.length} resumes with these IDs (any user)`);
-      if (allResumesWithIds.length > 0) {
+      const diagnosticIds = resumeIdStringsToObjectIds(resumeIds);
+      if (diagnosticIds.length > 0) {
+        const allResumesWithIds = await Resume.find({ _id: { $in: diagnosticIds } });
+        console.log(`   Found ${allResumesWithIds.length} resumes with these IDs (any user)`);
         allResumesWithIds.forEach((resume, idx) => {
           console.log(`   [${idx + 1}] Resume: ${resume.originalFile}, User: ${resume.user}`);
         });
@@ -1732,9 +1792,9 @@ router.post('/hr/run-ai-screening', authMiddleware, async (req, res) => {
     if (resumes.length === 0) {
       return res.status(400).json({
         success: false,
-        error: resumeIds && resumeIds.length > 0 
+        error: resumeIds && resumeIds.length > 0
           ? 'No resumes found in your selection.'
-          : 'No pending resumes found. All resumes have been processed.'
+          : 'No pending resumes found. All resumes have been processed.',
       });
     }
 
@@ -1746,7 +1806,7 @@ router.post('/hr/run-ai-screening', authMiddleware, async (req, res) => {
     // Test Python service connection first
     try {
       console.log(`   🔍 Testing Python AI Service at: ${PYTHON_SERVICE_URL}/health`);
-      const healthCheck = await axios.get(`${PYTHON_SERVICE_URL}/health`, { timeout: 5000 });
+      const healthCheck = await axios.get(`${PYTHON_SERVICE_URL}/health`, { timeout: 10000 });
       console.log(`   ✅ Python AI Service connected: ${healthCheck.data.ai_provider}`);
       console.log(`   Response status: ${healthCheck.status}`);
     } catch (healthError) {
@@ -1761,7 +1821,8 @@ router.post('/hr/run-ai-screening', authMiddleware, async (req, res) => {
         success: false,
         error: 'AI Service is not available. Please ensure Python service is running on port 5001.',
         details: healthError.message,
-        pythonServiceUrl: PYTHON_SERVICE_URL
+        pythonServiceUrl: PYTHON_SERVICE_URL,
+        hint: 'From the backend folder run: npm run ai-service (or npm run dev:with-ai to start API + AI together).'
       });
     }
 
@@ -2080,15 +2141,23 @@ router.get('/hr/stats', authMiddleware, async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Get counts
+    const allowedResumeIds = await getHrAccessibleResumeIds(userId);
+    const allowedOids = [...allowedResumeIds].map((id) => new ObjectId(id));
+
     const totalJobs = await Job.countDocuments({ postedBy: userId });
     const activeJobs = await Job.countDocuments({ postedBy: userId, status: 'active' });
-    const totalResumes = await Resume.countDocuments();
-    const totalMatches = await Match.countDocuments();
-    const anomalyReports = await AnomalyReport.countDocuments({ status: 'pending' });
+    const totalResumes = allowedResumeIds.size;
+    const totalMatches =
+      allowedOids.length > 0 ? await Match.countDocuments({ resume: { $in: allowedOids } }) : 0;
+    const anomalyReports =
+      allowedOids.length > 0
+        ? await AnomalyReport.countDocuments({ resume: { $in: allowedOids }, status: 'pending' })
+        : 0;
 
-    // Get recent activity
-    const recentResumes = await Resume.find().sort({ createdAt: -1 }).limit(5);
+    const recentResumes =
+      allowedOids.length > 0
+        ? await Resume.find({ _id: { $in: allowedOids } }).sort({ createdAt: -1 }).limit(5)
+        : [];
     const recentJobs = await Job.find({ postedBy: userId }).sort({ createdAt: -1 }).limit(5);
 
     res.json({
@@ -2302,36 +2371,76 @@ router.post('/jobseeker/deep-analyze', authMiddleware, requirePremium, async (re
 
     console.log(`\n🧠 Deep AI Analysis for resume: ${resumeId} (${resumeText.length} chars)`);
 
+    const groqKey = process.env.GROQ_API_KEY || '';
+    const geminiKey = process.env.GEMINI_API_KEY || '';
+
     const response = await axios.post(
       `${PYTHON_SERVICE_URL}/api/deep-analyze-resume`,
-      { resumeText },
-      { timeout: 90000 }
+      {
+        resumeText,
+        ...(groqKey ? { groqApiKey: groqKey } : {}),
+        ...(geminiKey ? { geminiApiKey: geminiKey } : {}),
+      },
+      {
+        timeout: 90000,
+        validateStatus: () => true,
+      }
     );
 
-    if (response.data.success) {
-      const analysis = response.data.data;
-      console.log(`✅ Deep analysis OK: ATS=${analysis.ats_score}, Keywords=${(analysis.recommended_job_keywords || []).length}`);
+    const payload = response.data || {};
+    if (!payload.success) {
+      const upstream = payload.error || `Deep analyze service responded with HTTP ${response.status}`;
+      console.error('[DEEP-ANALYZE] Python error:', upstream);
 
-      // Save deep analysis data WITHOUT overwriting main analysis scores
-      // Main scores (atsScore, grammarScore, readability, structureScore, overallScore)
-      // are set during initial upload analysis and should remain consistent
-      await Resume.findByIdAndUpdate(resumeId, {
-        $set: {
-          'aiAnalysis.deepAnalysis': analysis,
-          'aiAnalysis.recommendedKeywords': analysis.recommended_job_keywords || [],
-          'aiAnalysis.suggestedJobTitles': analysis.suggested_job_titles || [],
-          'aiAnalysis.strengths': analysis.strengths || [],
-          'aiAnalysis.weaknesses': analysis.weaknesses || [],
-          'aiAnalysis.suggestions': analysis.suggestions || [],
-        }
+      if (response.status === 400) {
+        return res.status(400).json({ success: false, error: upstream });
+      }
+      const hint =
+        response.status >= 500
+          ? 'Start the AI service from website-VeriResume/backend: npm run ai-service (same machine as PYTHON_SERVICE_URL).'
+          : undefined;
+      const outStatus =
+        response.status === 503 || response.status === 502 ? response.status : 502;
+      return res.status(outStatus).json({
+        success: false,
+        error: upstream,
+        ...(hint ? { hint } : {}),
       });
-
-      return res.json({ success: true, data: analysis });
-    } else {
-      return res.status(500).json({ success: false, error: response.data.error || 'Analysis failed' });
     }
+
+    const analysis = payload.data;
+    if (!analysis || typeof analysis !== 'object') {
+      return res.status(502).json({
+        success: false,
+        error: 'Invalid response from AI analysis service',
+      });
+    }
+
+    console.log(`✅ Deep analysis OK: ATS=${analysis.ats_score}, Keywords=${(analysis.recommended_job_keywords || []).length}`);
+
+    // Save deep analysis data WITHOUT overwriting main analysis scores
+    await Resume.findByIdAndUpdate(resumeId, {
+      $set: {
+        'aiAnalysis.deepAnalysis': analysis,
+        'aiAnalysis.recommendedKeywords': analysis.recommended_job_keywords || [],
+        'aiAnalysis.suggestedJobTitles': analysis.suggested_job_titles || [],
+        'aiAnalysis.strengths': analysis.strengths || [],
+        'aiAnalysis.weaknesses': analysis.weaknesses || [],
+        'aiAnalysis.suggestions': analysis.suggestions || [],
+      }
+    });
+
+    return res.json({ success: true, data: analysis });
   } catch (error) {
     console.error('Deep analysis error:', error.message);
+    const code = error.code;
+    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      return res.status(503).json({
+        success: false,
+        error: 'AI analysis service is not reachable.',
+        hint: 'From website-VeriResume/backend run: npm run ai-service',
+      });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -3854,12 +3963,7 @@ router.post('/jobseeker/enhance-resume', authMiddleware, requirePremium, async (
     const jdUpdatedAt = resume.jobDescription?.updatedAt ? new Date(resume.jobDescription.updatedAt) : null;
     const baseAts = Number(resume.jdAnalysis?.atsMatchScore ?? resume.aiAnalysis?.overallScore ?? 0) || 0;
 
-    if (!jdText || !jdText.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Target job description is required. Please run JD ATS analysis first.',
-      });
-    }
+    // jdText is optional. If missing, we'll do a general enhancement.
 
     // Rule: Only allow enhancement when ATS is below 75%
     if (baseAts >= 75) {
@@ -3924,7 +4028,7 @@ Weaknesses Found: ${weaknesses.join('; ') || 'None identified'}
 Suggestions: ${suggestions.join('; ') || 'None identified'}
 `;
 
-    const jdContext = `
+    const jdContext = jdText && jdText.trim() ? `
 JOB DESCRIPTION (Target):
 ${jdText.slice(0, 6000)}
 
@@ -3934,7 +4038,8 @@ Missing Keywords: ${Array.isArray(resume.jdAnalysis?.missingKeywords) ? resume.j
 Missing Certifications: ${Array.isArray(resume.jdAnalysis?.missingCertifications) ? resume.jdAnalysis.missingCertifications.join(', ') : ''}
 Missing Responsibilities: ${Array.isArray(resume.jdAnalysis?.missingResponsibilities) ? resume.jdAnalysis.missingResponsibilities.join(', ') : ''}
 Missing Tools: ${Array.isArray(resume.jdAnalysis?.missingTools) ? resume.jdAnalysis.missingTools.join(', ') : ''}
-`;
+` : 'No specific job description provided. Please enhance the resume generally based on their inferred target role, keeping it ATS-friendly and professional.';
+
 
     const prompt = `You are an expert resume writer, ATS optimization specialist, and ethical career consultant.
 
@@ -4544,7 +4649,10 @@ Return ONLY valid JSON with this exact shape:
       "type": "technical | hr | behavioral | scenario | project",
       "level": "beginner | intermediate | advanced",
       "question": "",
-      "focusArea": ""
+      "focusArea": "",
+      "suggestedAnswer": "A comprehensive model answer the candidate should aim to give (2-4 sentences)",
+      "keyPoints": ["Key point 1 to mention", "Key point 2 to mention", "Key point 3 to mention"],
+      "preparationTip": "A short actionable tip to prepare for this question"
     }
   ]
 }
@@ -4556,6 +4664,10 @@ Rules:
 - Spread across levels.
 - Align questions with resume skills, job description, projects/experience, and missing gaps when possible.
 - The questions MUST be concrete, not generic, and must be answerable without inventing experience.
+- EVERY question MUST have a suggestedAnswer (2-4 sentences), keyPoints (3-5 bullet points), and preparationTip.
+- suggestedAnswer should be a model response the candidate can adapt.
+- keyPoints should list the most important things to mention in the answer.
+- preparationTip should give practical advice for preparing this specific answer.
 
 Scoring:
 - readinessScore (0-100) should reflect ATS match, missing critical skills, and resume clarity.
@@ -4639,7 +4751,10 @@ Return ONLY valid JSON with this exact shape:
       "type": "technical | hr | behavioral | scenario | project",
       "level": "beginner | intermediate | advanced",
       "question": "",
-      "focusArea": ""
+      "focusArea": "",
+      "suggestedAnswer": "A comprehensive model answer the candidate should aim to give (2-4 sentences)",
+      "keyPoints": ["Key point 1 to mention", "Key point 2 to mention", "Key point 3 to mention"],
+      "preparationTip": "A short actionable tip to prepare for this question"
     }
   ]
 }
@@ -4650,6 +4765,7 @@ Rules:
 - Cover each type (technical, hr, behavioral, scenario, project).
 - Align questions with resume skills, job description, projects/experience, and missing gaps when possible.
 - The questions MUST be concrete, not generic.
+- EVERY question MUST have a suggestedAnswer (2-4 sentences), keyPoints (3-5 bullet points), and preparationTip.
 
 Scoring:
 - readinessScore (0-100) should reflect ATS match, missing critical skills, and resume clarity.`;

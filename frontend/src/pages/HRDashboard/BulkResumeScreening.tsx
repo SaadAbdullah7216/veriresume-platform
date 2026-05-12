@@ -47,7 +47,7 @@ import {
 } from '@mui/icons-material';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 interface Candidate {
   rank?: number;
@@ -81,7 +81,7 @@ const BulkResumeScreening: React.FC = () => {
   const [files, setFiles] = useState<File[]>([]);
   const [jobDescription, setJobDescription] = useState('');
   const [requirements, setRequirements] = useState('');
-  const [anomalyThreshold, setAnomalyThreshold] = useState(30);
+  const [atsThreshold, setAtsThreshold] = useState(60);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<ScreeningResults | null>(null);
@@ -127,7 +127,7 @@ const BulkResumeScreening: React.FC = () => {
       // Add job details
       formData.append('jobDescription', jobDescription);
       formData.append('requirements', requirements);
-      formData.append('anomalyThreshold', anomalyThreshold.toString());
+      formData.append('atsThreshold', atsThreshold.toString());
 
       // Simulate progress
       const progressInterval = setInterval(() => {
@@ -285,18 +285,18 @@ const BulkResumeScreening: React.FC = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <TextField
               type="number"
-              label="Anomaly Threshold"
-              value={anomalyThreshold}
-              onChange={(e) => setAnomalyThreshold(Number(e.target.value))}
+              label="ATS Score Threshold (%)"
+              value={atsThreshold}
+              onChange={(e) => setAtsThreshold(Number(e.target.value))}
               slotProps={{ htmlInput: { min: 0, max: 100 } }}
               sx={{ width: 200 }}
             />
-            <Tooltip title="Candidates with anomaly weight above this threshold will be rejected">
+            <Tooltip title="Candidates with ATS scores below this threshold will be flagged for review or rejected">
               <Info color="action" />
             </Tooltip>
           </Box>
           <Typography variant="caption" color="text.secondary">
-            Recommended: 25-30 for technical roles, 30-40 for other roles
+            Example: Minimum ATS Score Required: 70%
           </Typography>
         </CardContent>
       </Card>

@@ -25,7 +25,7 @@ const callGroq = async (prompt) => {
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 4000,
+      max_tokens: 8000,
       response_format: { type: 'json_object' },
     },
     {
@@ -49,7 +49,7 @@ const callOpenAI = async (prompt) => {
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 4000,
+      max_tokens: 8000,
       response_format: { type: 'json_object' },
     },
     {
@@ -71,7 +71,7 @@ const callGemini = async (prompt) => {
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 4000 },
+      generationConfig: { temperature: 0.3, maxOutputTokens: 8000 },
     },
     { timeout: 45000 }
   );

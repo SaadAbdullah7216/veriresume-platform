@@ -176,8 +176,6 @@ const HRDashboardNew = () => {
   const [viewerTitle, setViewerTitle] = useState<string>("");
   const [showThresholdModal, setShowThresholdModal] = useState(false);
   const [atsThreshold, setAtsThreshold] = useState(60);
-  const [anomalyThreshold, setAnomalyThreshold] = useState(30);
-  const [matchThreshold, setMatchThreshold] = useState(50);
 
   // Job Form State
   const [jobForm, setJobForm] = useState({
@@ -703,8 +701,6 @@ const HRDashboardNew = () => {
       // Log threshold values being sent
       console.log('🔍 THRESHOLD DEBUG INFO:');
       console.log(`   atsThreshold: ${atsThreshold}`);
-      console.log(`   anomalyThreshold: ${anomalyThreshold}`);
-      console.log(`   matchThreshold: ${matchThreshold}`);
 
       const response = await axios.post(
         `${API_URL}/api/hr/run-ai-screening`,
@@ -712,8 +708,6 @@ const HRDashboardNew = () => {
           jobDescription,
           resumeIds: selectedResumes.length > 0 ? selectedResumes : undefined,
           atsThreshold,
-          anomalyThreshold,
-          matchThreshold,
           jobId: selectedJob || undefined
         },
         {
@@ -768,7 +762,13 @@ const HRDashboardNew = () => {
         errorMessage += "🔌 AI Service Not Available\n\n";
         errorMessage += error.response?.data?.error || "Python AI service is not running.";
         errorMessage += "\n\nPlease ensure Python service is running on port 5001.";
-        errorMessage += "\n\nCheck the PowerShell window with 'Python AI Service' title.";
+        if (error.response?.data?.hint) {
+          errorMessage += `\n\n${error.response.data.hint}`;
+        } else {
+          errorMessage +=
+            "\n\nFrom website-VeriResume/backend run: npm run ai-service";
+        }
+        errorMessage += "\n\nOr start API + AI: npm run dev:with-ai";
       } else if (error.response?.status === 400) {
         errorMessage += error.response?.data?.error || "No pending resumes found";
       } else if (error.response?.status === 500) {
@@ -792,7 +792,7 @@ const HRDashboardNew = () => {
     setShowThresholdModal(false);
     const resumesToProcess = selectedResumes.length > 0 
       ? resumes.filter(r => selectedResumes.includes(r._id!))
-      : resumes.filter(r => r.status === 'pending');
+      : resumes.filter((r) => (r.aiAnalysis?.atsScore ?? 0) === 0);
 
     if (resumesToProcess.length === 0) {
       alert("⚠️ No resumes to analyze!");
@@ -805,8 +805,6 @@ const HRDashboardNew = () => {
       const token = localStorage.getItem("token");
       console.log(`🤖 Running AI Screening with thresholds:`, {
         atsThreshold,
-        anomalyThreshold,
-        matchThreshold,
         resumeCount: resumesToProcess.length
       });
       
@@ -816,8 +814,6 @@ const HRDashboardNew = () => {
           jobDescription,
           resumeIds: selectedResumes.length > 0 ? selectedResumes : undefined,
           atsThreshold,
-          anomalyThreshold,
-          matchThreshold,
           jobId: selectedJob || undefined
         },
         {
@@ -857,6 +853,12 @@ const HRDashboardNew = () => {
         errorMessage += "⏱️ Processing timeout. Try again or check if Python service is running.";
       } else if (error.response?.status === 503) {
         errorMessage += "🔌 AI Service Not Available\n\nPython AI service is not running on port 5001.";
+        if (error.response?.data?.hint) {
+          errorMessage += `\n\n${error.response.data.hint}`;
+        } else {
+          errorMessage += "\n\nFrom website-VeriResume/backend run: npm run ai-service";
+        }
+        errorMessage += "\n\nOr: npm run dev:with-ai";
       } else if (error.response?.status === 400) {
         errorMessage += error.response?.data?.error || "No pending resumes found";
       } else if (error.response?.status === 500) {
@@ -4081,110 +4083,18 @@ const HRDashboardNew = () => {
               </label>
             </div>
 
-            {/* Anomaly Threshold */}
-            <div className="space-y-3">
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700 mb-2 block">
-                  🔍 Anomaly Threshold (Resume Quality)
-                </span>
-                <p className="text-xs text-slate-600 mb-3">
-                  Maximum allowed resume quality issues (0-100)
-                </p>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="5"
-                    value={anomalyThreshold}
-                    onChange={(e) => setAnomalyThreshold(Number(e.target.value))}
-                    className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <span className="text-lg font-bold text-blue-600 w-12 text-center">{anomalyThreshold}</span>
-                </div>
-                <div className="flex gap-2 mt-2 text-xs">
-                  <button
-                    onClick={() => setAnomalyThreshold(20)}
-                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold"
-                  >
-                    Strict (20)
-                  </button>
-                  <button
-                    onClick={() => setAnomalyThreshold(30)}
-                    className="px-2 py-1 bg-blue-100 hover:bg-blue-200 rounded text-blue-700 font-semibold"
-                  >
-                    Balanced (30)
-                  </button>
-                  <button
-                    onClick={() => setAnomalyThreshold(50)}
-                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold"
-                  >
-                    Lenient (50)
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            {/* Match Threshold */}
-            <div className="space-y-3">
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700 mb-2 block">
-                  💼 Match Threshold (Job Relevance)
-                </span>
-                <p className="text-xs text-slate-600 mb-3">
-                  Minimum required match score (0-100)
-                </p>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="5"
-                    value={matchThreshold}
-                    onChange={(e) => setMatchThreshold(Number(e.target.value))}
-                    className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <span className="text-lg font-bold text-green-600 w-12 text-center">{matchThreshold}%</span>
-                </div>
-                <div className="flex gap-2 mt-2 text-xs">
-                  <button
-                    onClick={() => setMatchThreshold(40)}
-                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold"
-                  >
-                    Lenient (40%)
-                  </button>
-                  <button
-                    onClick={() => setMatchThreshold(50)}
-                    className="px-2 py-1 bg-green-100 hover:bg-green-200 rounded text-green-700 font-semibold"
-                  >
-                    Balanced (50%)
-                  </button>
-                  <button
-                    onClick={() => setMatchThreshold(60)}
-                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold"
-                  >
-                    Strict (60%)
-                  </button>
-                </div>
-              </label>
-            </div>
-
             {/* Summary */}
-            <div className="bg-gradient-to-r from-purple-50 via-blue-50 to-green-50 border-2 border-purple-300 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-bold text-slate-900">📊 Your Decision Thresholds:</p>
+            <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-300 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-bold text-slate-900">📊 Your Screening Threshold:</p>
               <div className="bg-white p-3 rounded space-y-2 border-l-4 border-purple-500">
                 <p className="text-xs text-slate-700">
-                  <span className="font-bold text-purple-600">{atsThreshold}%</span> ATS Score Threshold
+                  <span className="font-bold text-purple-600">{atsThreshold}%</span> Minimum ATS Score Required
                 </p>
                 <div className="bg-slate-50 p-2 rounded text-xs space-y-1">
                   <p>✅ ATS ≥ <strong>{atsThreshold}%</strong> → <strong className="text-green-700">SHORTLISTED</strong></p>
                   <p>🔍 ATS ≥ <strong>{atsThreshold - 10}%</strong> → <strong className="text-amber-700">NEEDS REVIEW</strong></p>
                   <p>❌ ATS &lt; <strong>{atsThreshold - 10}%</strong> → <strong className="text-red-700">REJECTED</strong></p>
                 </div>
-              </div>
-              <div className="text-xs text-slate-600 space-y-1">
-                <p>📋 Anomaly threshold: <span className="font-bold">{anomalyThreshold}</span></p>
-                <p>💼 Job match requirement: <span className="font-bold">{matchThreshold}%</span></p>
               </div>
             </div>
 

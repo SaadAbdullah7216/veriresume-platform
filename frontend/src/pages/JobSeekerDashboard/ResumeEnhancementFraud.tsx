@@ -216,22 +216,22 @@ const ResumeEnhancementFraud = () => {
     setAtsResult(null);
     try {
       const token = localStorage.getItem("token");
-      const [atsRes, moduleRes] = await Promise.all([
-        axios.post(
-          `${API_URL}/api/jobseeker/jd-ats-analysis`,
-          {
-            resumeId: resumeData._id,
-            jobDescription: jobDesc,
-            jobDescriptionFileName: jdFileName,
-          },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
-        ),
-        axios.post(
-          `${API_URL}/api/jobseeker/resume-enhancement-fraud`,
-          { resumeId: resumeData._id, jobDescription: jobDesc },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
-        ),
-      ]);
+      // Run sequentially to prevent rate limits from AI providers
+      const atsRes = await axios.post(
+        `${API_URL}/api/jobseeker/jd-ats-analysis`,
+        {
+          resumeId: resumeData._id,
+          jobDescription: jobDesc,
+          jobDescriptionFileName: jdFileName,
+        },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+      );
+      
+      const moduleRes = await axios.post(
+        `${API_URL}/api/jobseeker/resume-enhancement-fraud`,
+        { resumeId: resumeData._id, jobDescription: jobDesc },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 60000 }
+      );
 
       if (atsRes.data?.success) {
         setAtsResult(atsRes.data.data);
@@ -550,15 +550,34 @@ const ResumeEnhancementFraud = () => {
             }
           >
             {!interviewPrep ? (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                <p className="text-sm text-slate-600">Generate interview questions and readiness score based on your resume and job description.</p>
-                <button
-                  onClick={runInterviewPrep}
-                  disabled={prepLoading}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-60"
-                >
-                  {prepLoading ? "Generating..." : "Generate Interview Prep"}
-                </button>
+              <div className="flex flex-col gap-4">
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                  <p className="text-sm font-semibold text-blue-900 mb-1">How Interview Prep Works</p>
+                  <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+                    <li>AI generates 30+ questions based on your resume &amp; job description</li>
+                    <li>Every question includes a suggested answer, key points &amp; a preparation tip</li>
+                    <li>3 difficulty levels: Beginner, Intermediate &amp; Advanced</li>
+                    <li>Start a live mock interview to practise with AI evaluation</li>
+                  </ul>
+                </div>
+                {prepLoading ? (
+                  <div className="flex items-center gap-3 p-4 bg-violet-50 border border-violet-200 rounded-xl">
+                    <Loader className="animate-spin text-violet-600 shrink-0" size={20} />
+                    <div>
+                      <p className="text-sm font-semibold text-violet-900">Generating Interview Prep...</p>
+                      <p className="text-xs text-violet-600">Building your personalised question bank with AI</p>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={runInterviewPrep}
+                    disabled={prepLoading}
+                    className="self-start px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-60 flex items-center gap-2"
+                  >
+                    <Zap size={16} />
+                    Generate Interview Prep
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -575,38 +594,47 @@ const ResumeEnhancementFraud = () => {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {["beginner", "intermediate", "advanced"].map((level) => {
+                  {(["beginner", "intermediate", "advanced"] as const).map((level) => {
                     const count = (interviewPrep.questions || []).filter((q: any) => q.level === level).length;
+                    const levelStyles: Record<string, string> = {
+                      beginner: "bg-green-50 border-green-200 text-green-800",
+                      intermediate: "bg-blue-50 border-blue-200 text-blue-800",
+                      advanced: "bg-purple-50 border-purple-200 text-purple-800",
+                    };
                     return (
-                      <div key={level} className="border border-slate-200 rounded-xl p-3">
-                        <p className="text-xs uppercase text-slate-500">{level}</p>
-                        <p className="text-lg font-semibold text-slate-800">{count} questions</p>
+                      <div key={level} className={`border rounded-xl p-4 ${levelStyles[level]}`}>
+                        <p className="text-xs uppercase font-bold opacity-70 mb-1">{level}</p>
+                        <p className="text-2xl font-bold">{count}</p>
+                        <p className="text-xs opacity-70">{count === 1 ? "question" : "questions"}</p>
                       </div>
                     );
                   })}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
+                  {(["beginner", "intermediate", "advanced"] as const).map((level) => {
+                    const btnStyles: Record<string, string> = {
+                      beginner: "bg-green-600 hover:bg-green-700 text-white",
+                      intermediate: "bg-blue-600 hover:bg-blue-700 text-white",
+                      advanced: "bg-purple-600 hover:bg-purple-700 text-white",
+                    };
+                    return (
+                      <button
+                        key={level}
+                        onClick={() => startMockInterview(level)}
+                        disabled={mockLoading}
+                        className={`px-4 py-2 rounded-xl font-semibold transition-all capitalize disabled:opacity-60 ${btnStyles[level]}`}
+                      >
+                        {mockLoading ? "Loading..." : `Start ${level.charAt(0).toUpperCase() + level.slice(1)} Mock`}
+                      </button>
+                    );
+                  })}
                   <button
-                    onClick={() => startMockInterview("beginner")}
-                    disabled={mockLoading}
-                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
+                    onClick={runInterviewPrep}
+                    disabled={prepLoading}
+                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all border border-slate-200 disabled:opacity-60"
                   >
-                    Start Beginner Mock
-                  </button>
-                  <button
-                    onClick={() => startMockInterview("intermediate")}
-                    disabled={mockLoading}
-                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
-                  >
-                    Start Intermediate Mock
-                  </button>
-                  <button
-                    onClick={() => startMockInterview("advanced")}
-                    disabled={mockLoading}
-                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-all"
-                  >
-                    Start Advanced Mock
+                    {prepLoading ? "Regenerating..." : "Regenerate"}
                   </button>
                 </div>
 
@@ -648,6 +676,74 @@ const ResumeEnhancementFraud = () => {
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+                {/* Full question bank with preparation guides */}
+                {(interviewPrep.questions || []).length > 0 && (
+                  <div className="mt-4 space-y-6">
+                    <h4 className="text-base font-bold text-slate-800 flex items-center gap-2 border-b border-slate-200 pb-2">
+                      <BookOpen size={18} className="text-cyan-600" />
+                      Full Question Bank with Preparation Guides
+                    </h4>
+                    {(["beginner", "intermediate", "advanced"] as const).map((level) => {
+                      const levelQuestions = (interviewPrep.questions || []).filter((q: any) => q.level === level);
+                      if (levelQuestions.length === 0) return null;
+                      const levelSt: Record<string, { outer: string; header: string; headerText: string; bullet: string }> = {
+                        beginner: { outer: "border-green-200 bg-green-50/40", header: "bg-green-100", headerText: "text-green-800", bullet: "bg-green-500" },
+                        intermediate: { outer: "border-blue-200 bg-blue-50/40", header: "bg-blue-100", headerText: "text-blue-800", bullet: "bg-blue-500" },
+                        advanced: { outer: "border-purple-200 bg-purple-50/40", header: "bg-purple-100", headerText: "text-purple-800", bullet: "bg-purple-500" },
+                      };
+                      const st = levelSt[level];
+                      return (
+                        <div key={level} className={`rounded-2xl border-2 ${st.outer} overflow-hidden`}>
+                          <div className={`px-5 py-3 ${st.header}`}>
+                            <h5 className={`font-bold text-sm uppercase tracking-wide ${st.headerText}`}>
+                              {level.charAt(0).toUpperCase() + level.slice(1)} Level &mdash; {levelQuestions.length} Questions
+                            </h5>
+                          </div>
+                          <div className="p-4 space-y-4">
+                            {levelQuestions.map((q: any, i: number) => (
+                              <div key={q.id || i} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 shadow-sm">
+                                <div className="flex items-start gap-2">
+                                  <span className={`shrink-0 mt-0.5 w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center ${st.bullet}`}>{i + 1}</span>
+                                  <p className="text-sm font-semibold text-slate-800 flex-1">{q.question}</p>
+                                </div>
+                                {q.type && (
+                                  <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 tracking-wide">
+                                    {q.type.replace(/_/g, " ")}
+                                  </span>
+                                )}
+                                {q.suggestedAnswer && (
+                                  <div className="p-3 bg-cyan-50 rounded-lg border border-cyan-200">
+                                    <p className="text-xs font-bold text-cyan-700 mb-1.5 uppercase tracking-wide">Suggested Answer</p>
+                                    <p className="text-sm text-slate-700 leading-relaxed">{q.suggestedAnswer}</p>
+                                  </div>
+                                )}
+                                {q.keyPoints && q.keyPoints.length > 0 && (
+                                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <p className="text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Key Points to Mention</p>
+                                    <ul className="space-y-1.5">
+                                      {q.keyPoints.map((pt: string, pi: number) => (
+                                        <li key={pi} className="text-xs text-slate-700 flex items-start gap-2">
+                                          <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${st.bullet}`} />
+                                          {pt}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {q.preparationTip && (
+                                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                                    <p className="text-xs font-bold text-amber-700 mb-1 uppercase tracking-wide">Preparation Tip</p>
+                                    <p className="text-xs text-amber-800 leading-relaxed">{q.preparationTip}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
