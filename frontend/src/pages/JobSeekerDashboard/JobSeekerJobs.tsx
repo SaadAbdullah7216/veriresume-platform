@@ -530,34 +530,21 @@ const JobSeekerJobs = () => {
     }
   };
 
-  const handleApply = (job: Job) => {
-    // Resolve the best available URL from all possible field names
-    if (job.source === "Portal") {
-      // Portal jobs → apply via API (registers application in DB)
-      applyToPortalJob(job._id);
-    } else {
-      const rawLink = job.applyUrl || job.job_apply_link || job.url || "#";
+  const getApplyLink = (job: Job) => {
+    const rawLink = job.applyUrl || job.job_apply_link || job.url || "#";
+    if (!rawLink || rawLink === "#") return "#";
     
-      if (!rawLink || rawLink === "#") {
-        console.warn("No apply link available for job:", job.title);
-        return;
+    let applyLink = rawLink.trim();
+    if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
+      if (applyLink.startsWith('//')) {
+        applyLink = 'https:' + applyLink;
+      } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
+        applyLink = 'https://' + applyLink;
       }
-
-      let applyLink = rawLink.trim();
-      
-      // Fix URLs missing protocol
-      if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
-        if (applyLink.startsWith('//')) {
-          applyLink = 'https:' + applyLink;
-        } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
-          applyLink = 'https://' + applyLink;
-        }
-      }
-
-      console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
-      window.open(applyLink, "_blank", "noopener,noreferrer");
     }
+    return applyLink;
   };
+
 
   const applyToPortalJob = async (jobId: string) => {
     try {
@@ -1153,7 +1140,6 @@ const JobSeekerJobs = () => {
 
                         {/* Apply Button */}
                         {isPortal ? (
-                          // Portal job: apply via API or show applied status
                           appliedJobs[jobId] ? (
                             <button
                               disabled
@@ -1165,8 +1151,8 @@ const JobSeekerJobs = () => {
                             </button>
                           ) : (
                             <button
-                              onClick={() => handleApply(job)}
-                              className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm"
+                              onClick={() => applyToPortalJob(job._id)}
+                              className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm cursor-pointer"
                             >
                               <Briefcase size={15} />
                               Apply Now
@@ -1174,13 +1160,23 @@ const JobSeekerJobs = () => {
                           )
                         ) : (
                           // External job: open direct link
-                          <button
-                            onClick={() => handleApply(job)}
-                            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm"
+                          <a
+                            href={getApplyLink(job)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
+                              if (getApplyLink(job) === "#") {
+                                e.preventDefault();
+                                console.warn("No valid apply link for:", job.title);
+                              } else {
+                                console.log("[APPLY] User clicking link for:", job.title);
+                              }
+                            }}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm cursor-pointer z-10"
                           >
                             <ExternalLink size={15} />
-                            Apply on {getSourceBadge(job.source || "").label}
-                          </button>
+                            Apply Now
+                          </a>
                         )}
                       </div>
                     </div>

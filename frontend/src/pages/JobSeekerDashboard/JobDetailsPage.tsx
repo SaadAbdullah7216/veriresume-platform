@@ -139,17 +139,11 @@ const JobDetailsPage = () => {
     }
   };
 
-  const handleApply = () => {
+  const getApplyLink = () => {
     const rawLink = job?.applyUrl || (job as any)?.job_apply_link || (job as any)?.url || (job as any)?.link || (job as any)?.apply_url || "#";
+    if (!rawLink || rawLink === "#") return "#";
     
-    if (!rawLink || rawLink === "#") {
-      console.warn("No apply link available for job:", job?.title);
-      return;
-    }
-
     let applyLink = rawLink.trim();
-    
-    // Fix URLs missing protocol
     if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
       if (applyLink.startsWith('//')) {
         applyLink = 'https:' + applyLink;
@@ -157,10 +151,9 @@ const JobDetailsPage = () => {
         applyLink = 'https://' + applyLink;
       }
     }
-
-    console.log(`[APPLY] Opening link for "${job?.title}":`, applyLink);
-    window.open(applyLink, "_blank", "noopener,noreferrer");
+    return applyLink;
   };
+
 
   const formatDate = (dateStr: string) => {
     try {
@@ -278,13 +271,15 @@ const JobDetailsPage = () => {
 
             {/* Action Buttons */}
             <div className="flex items-center gap-3 border-t border-slate-200 pt-6">
-              <button
-                onClick={handleApply}
-                className="flex-1 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+              <a
+                href={getApplyLink()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-bold hover:shadow-lg transition-all text-base cursor-pointer z-10"
               >
-                <ExternalLink size={18} />
+                <ExternalLink size={20} />
                 Apply Now
-              </button>
+              </a>
               <button
                 onClick={handleToggleSave}
                 disabled={saving}

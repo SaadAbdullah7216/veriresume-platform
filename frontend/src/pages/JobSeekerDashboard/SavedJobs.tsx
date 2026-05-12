@@ -84,17 +84,11 @@ const SavedJobs = () => {
     }
   };
 
-  const handleApply = (job: SavedJobItem) => {
+  const getApplyLink = (job: SavedJobItem) => {
     const rawLink = job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || (job as any).apply_url || "#";
+    if (!rawLink || rawLink === "#") return "#";
     
-    if (!rawLink || rawLink === "#") {
-      console.warn("No apply link available for job:", job.title);
-      return;
-    }
-
     let applyLink = rawLink.trim();
-    
-    // Fix URLs missing protocol
     if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
       if (applyLink.startsWith('//')) {
         applyLink = 'https:' + applyLink;
@@ -102,10 +96,9 @@ const SavedJobs = () => {
         applyLink = 'https://' + applyLink;
       }
     }
-
-    console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
-    window.open(applyLink, "_blank", "noopener,noreferrer");
+    return applyLink;
   };
+
 
   const formatDate = (dateStr: string) => {
     try {
@@ -255,12 +248,23 @@ const SavedJobs = () => {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleApply(job)}
-                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all flex items-center gap-1"
-                  >
-                    <ExternalLink size={14} /> Apply
-                  </button>
+                              <a
+                                href={getApplyLink(job)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  if (getApplyLink(job) === "#") {
+                                    e.preventDefault();
+                                    console.warn("No valid apply link for:", job.title);
+                                  } else {
+                                    console.log("[APPLY] User clicking link for:", job.title);
+                                  }
+                                }}
+                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm cursor-pointer z-10"
+                              >
+                                <ExternalLink size={15} />
+                                Apply Now
+                              </a>
                   {job.source === "JSearch" && (
                     <button
                       onClick={() => navigate(`/jobseeker/job/${encodeURIComponent(job.jobId)}`)}

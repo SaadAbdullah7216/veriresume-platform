@@ -232,18 +232,11 @@ const UploadResume = () => {
     }
   };
 
-  const handleApplyJob = (job: any) => {
-    // Resolve the best available URL from all possible field names
+  const handleApplyJobLink = (job: any) => {
     const rawLink = job.applyUrl || job.job_apply_link || job.url || job.link || (job as any).apply_url || "#";
-    
-    if (!rawLink || rawLink === "#") {
-      console.warn("No apply link available for job:", job.title);
-      return;
-    }
+    if (!rawLink || rawLink === "#") return "#";
 
     let applyLink = rawLink.trim();
-    
-    // Fix URLs missing protocol (common in scrapers)
     if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
       if (applyLink.startsWith('//')) {
         applyLink = 'https:' + applyLink;
@@ -251,10 +244,9 @@ const UploadResume = () => {
         applyLink = 'https://' + applyLink;
       }
     }
-
-    console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
-    window.open(applyLink, "_blank", "noopener,noreferrer");
+    return applyLink;
   };
+
 
   // Check if user is logged in
   React.useEffect(() => {
@@ -1591,13 +1583,23 @@ const UploadResume = () => {
                                 {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                                 {isExpanded ? "Show Less" : "View Details"}
                               </button>
-                              <button
-                                onClick={() => handleApplyJob(job)}
-                                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm"
+                              <a
+                                href={handleApplyJobLink(job)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  if (!handleApplyJobLink(job) || handleApplyJobLink(job) === "#") {
+                                    e.preventDefault();
+                                    console.warn("No valid apply link for:", job.title);
+                                  } else {
+                                    console.log("[APPLY] User clicking link for:", job.title);
+                                  }
+                                }}
+                                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm cursor-pointer z-10"
                               >
                                 <ExternalLink size={15} />
                                 Apply Now
-                              </button>
+                              </a>
                               <button
                                 onClick={() => handleSaveJob(job)}
                                 disabled={savingJob === jobId}

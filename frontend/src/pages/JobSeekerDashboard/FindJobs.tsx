@@ -399,23 +399,26 @@ const FindJobs = () => {
     }
   };
 
-  const handleApply = (job: JSearchJob) => {
+  const getApplyLink = (job: JSearchJob) => {
     const rawLink = job.applyUrl || (job as any).job_apply_link || (job as any).url || (job as any).link || (job as any).apply_url || "#";
+    if (!rawLink || rawLink === "#") return "#";
     
-    if (!rawLink || rawLink === "#") {
-      console.warn("No apply link available for job:", job.title);
-      return;
-    }
-
     let applyLink = rawLink.trim();
-    
-    // Fix URLs missing protocol (common in scrapers)
     if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
       if (applyLink.startsWith('//')) {
         applyLink = 'https:' + applyLink;
       } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
         applyLink = 'https://' + applyLink;
       }
+    }
+    return applyLink;
+  };
+
+  const handleApply = (job: JSearchJob) => {
+    const applyLink = getApplyLink(job);
+    if (applyLink === "#") {
+      console.warn("No apply link available for job:", job.title);
+      return;
     }
 
     console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
@@ -1094,13 +1097,23 @@ const FindJobs = () => {
                       {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                       {isExpanded ? "Show Less" : "View Details"}
                     </button>
-                    <button
-                      onClick={() => handleApply(job)}
-                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm"
+                    <a
+                      href={getApplyLink(job)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => {
+                        if (getApplyLink(job) === "#") {
+                          e.preventDefault();
+                          console.warn("No valid apply link for:", job.title);
+                        } else {
+                          console.log("[APPLY] User clicking link for:", job.title);
+                        }
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all text-sm cursor-pointer z-10"
                     >
                       <ExternalLink size={15} />
                       Apply Now
-                    </button>
+                    </a>
                     <button
                       onClick={() => navigate(`/jobseeker/job/${encodeURIComponent(job.id)}`)}
                       className="px-4 py-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-700 hover:border-cyan-300 hover:bg-cyan-50 transition-all text-sm"
