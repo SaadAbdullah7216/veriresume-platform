@@ -4906,7 +4906,7 @@ router.get('/jsearch/search', authMiddleware, async (req, res) => {
         : job.job_salary_period
           ? `${job.job_salary_currency || '$'}${job.job_min_salary || 'N/A'} ${job.job_salary_period}`
           : 'Not specified',
-      applyUrl: job.job_apply_link,
+      applyUrl: job.job_apply_link || job.job_google_link || job.job_offer_url || job.job_url || "#",
       logo: job.employer_logo,
       postedDate: job.job_posted_at_datetime_utc,
       source: 'JSearch',
@@ -4983,7 +4983,7 @@ router.get('/jsearch/details/:jobId', authMiddleware, async (req, res) => {
         salary: job.job_min_salary && job.job_max_salary
           ? `$${job.job_min_salary.toLocaleString()} - $${job.job_max_salary.toLocaleString()}`
           : 'Not specified',
-        applyUrl: job.job_apply_link,
+        applyUrl: job.job_apply_link || job.job_google_link || job.job_offer_url || job.job_url || "#",
         logo: job.employer_logo,
         postedDate: job.job_posted_at_datetime_utc,
         isRemote: job.job_is_remote,

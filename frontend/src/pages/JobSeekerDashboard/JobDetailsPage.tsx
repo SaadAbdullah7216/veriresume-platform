@@ -140,10 +140,26 @@ const JobDetailsPage = () => {
   };
 
   const handleApply = () => {
-    const applyLink = job?.applyUrl || (job as any)?.job_apply_link || (job as any)?.url || (job as any)?.link || (job as any)?.apply_url || "#";
-    if (applyLink && applyLink !== "#") {
-      window.open(applyLink, "_blank", "noopener,noreferrer");
+    const rawLink = job?.applyUrl || (job as any)?.job_apply_link || (job as any)?.url || (job as any)?.link || (job as any)?.apply_url || "#";
+    
+    if (!rawLink || rawLink === "#") {
+      console.warn("No apply link available for job:", job?.title);
+      return;
     }
+
+    let applyLink = rawLink.trim();
+    
+    // Fix URLs missing protocol
+    if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
+      if (applyLink.startsWith('//')) {
+        applyLink = 'https:' + applyLink;
+      } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
+        applyLink = 'https://' + applyLink;
+      }
+    }
+
+    console.log(`[APPLY] Opening link for "${job?.title}":`, applyLink);
+    window.open(applyLink, "_blank", "noopener,noreferrer");
   };
 
   const formatDate = (dateStr: string) => {

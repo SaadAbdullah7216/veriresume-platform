@@ -110,11 +110,8 @@ const JobSeekerJobs = () => {
     // Helper: check if a job URL is valid and not a bare domain root
     const isValidJobUrl = (url?: string): boolean => {
       if (!url || url === '#') return false;
-      try {
-        const u = new URL(url);
-        if (u.pathname === '/' && !u.search) return false;
-        return true;
-      } catch { return false; }
+      // Lenient validation: as long as it looks like a URL or starts with protocol/domain
+      return url.includes('.') && !url.includes(' ');
     };
 
     const mapped = externalJobs
@@ -535,17 +532,30 @@ const JobSeekerJobs = () => {
 
   const handleApply = (job: Job) => {
     // Resolve the best available URL from all possible field names
-    const applyLink =
-      job.applyUrl || job.job_apply_link || job.url || "#";
-
     if (job.source === "Portal") {
       // Portal jobs → apply via API (registers application in DB)
       applyToPortalJob(job._id);
-    } else if (applyLink && applyLink !== "#") {
-      // External jobs → open the real job URL in new tab
-      window.open(applyLink, "_blank", "noopener,noreferrer");
     } else {
-      console.warn("No apply link available for job:", job.title);
+      const rawLink = job.applyUrl || job.job_apply_link || job.url || "#";
+    
+      if (!rawLink || rawLink === "#") {
+        console.warn("No apply link available for job:", job.title);
+        return;
+      }
+
+      let applyLink = rawLink.trim();
+      
+      // Fix URLs missing protocol
+      if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
+        if (applyLink.startsWith('//')) {
+          applyLink = 'https:' + applyLink;
+        } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
+          applyLink = 'https://' + applyLink;
+        }
+      }
+
+      console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
+      window.open(applyLink, "_blank", "noopener,noreferrer");
     }
   };
 

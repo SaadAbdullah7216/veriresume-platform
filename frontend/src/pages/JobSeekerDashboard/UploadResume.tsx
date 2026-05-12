@@ -20,6 +20,7 @@ import {
   ExternalLink,
   Globe,
   Zap,
+  Bookmark,
   BookmarkPlus,
   BookmarkCheck,
   ChevronDown,
@@ -233,12 +234,26 @@ const UploadResume = () => {
 
   const handleApplyJob = (job: any) => {
     // Resolve the best available URL from all possible field names
-    const applyLink = job.applyUrl || job.job_apply_link || job.url || job.link || (job as any).apply_url || "#";
-    if (applyLink && applyLink !== "#") {
-      window.open(applyLink, "_blank", "noopener,noreferrer");
-    } else {
+    const rawLink = job.applyUrl || job.job_apply_link || job.url || job.link || (job as any).apply_url || "#";
+    
+    if (!rawLink || rawLink === "#") {
       console.warn("No apply link available for job:", job.title);
+      return;
     }
+
+    let applyLink = rawLink.trim();
+    
+    // Fix URLs missing protocol (common in scrapers)
+    if (!applyLink.startsWith('http://') && !applyLink.startsWith('https://')) {
+      if (applyLink.startsWith('//')) {
+        applyLink = 'https:' + applyLink;
+      } else if (applyLink.includes('.') && !applyLink.includes(' ')) {
+        applyLink = 'https://' + applyLink;
+      }
+    }
+
+    console.log(`[APPLY] Opening link for "${job.title}":`, applyLink);
+    window.open(applyLink, "_blank", "noopener,noreferrer");
   };
 
   // Check if user is logged in
@@ -459,12 +474,8 @@ const UploadResume = () => {
         const allJobs = rawJobs.filter((job: any) => {
           const u = job.url || job.applyUrl || job.job_apply_link || job.link;
           if (!u || u === '#') return false;
-          try {
-            const parsed = new URL(u);
-            // Reject bare domain roots (e.g. https://indeed.com or https://indeed.com/)
-            if (parsed.pathname === '/' && !parsed.search) return false;
-            return true;
-          } catch { return false; }
+          // Lenient validation: as long as it looks like a URL or starts with protocol/domain
+          return u.includes('.') && !u.includes(' ');
         });
         console.log(`Matching jobs found: ${rawJobs.length} total, ${allJobs.length} with valid URLs`);
         setMatchingJobs(allJobs);
@@ -1406,7 +1417,7 @@ const UploadResume = () => {
                     {unifiedJobs.map((job: any, idx: number) => {
                       const jobId = job.id || `unified-${idx}`;
                       const isExpanded = expandedJobId === jobId;
-                      const isSaved = savedJobIds.has(jobId);
+                      const isSaved = !!savedJobMap[jobId];
                       const isSaving = savingJob === jobId;
 
                       return (
@@ -1490,7 +1501,7 @@ const UploadResume = () => {
 
                               {/* Save Button */}
                               <button
-                                onClick={() => handleSaveJob(job, job.source)}
+                                onClick={() => handleSaveJob(job)}
                                 disabled={isSaving}
                                 className="p-2 hover:bg-slate-100 rounded-lg transition-all flex-shrink-0"
                                 title={isSaved ? "Remove from saved" : "Save job"}
